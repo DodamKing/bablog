@@ -3,15 +3,15 @@
 > **매 작업마다 여기를 갱신한다.** 세션 시작 시 이 파일부터 읽는다.
 
 ## 현재 상태
-- **단계:** **Phase 0·1 완료 + Phase 1.5 코드 완료.** 브랜딩(마스코트→파비콘/PWA아이콘/maskable/OG)·manifest·서비스워커까지 구현·빌드 통과. **남은 건 폰에서 홈 설치 standalone 확인(사용자).**
-- **다음 작업:** 폰 설치 확인 후 **Phase 2(조회: 히스토리+체중)**. 읽을 문서: `03`, `05`(2·3번 화면). 차트는 Recharts(D8), 체중 목표는 검토(D15).
+- **단계:** **Phase 0·1·1.5·2 코드 완료.** 조회까지 구현: 히스토리(일/주/월, Recharts 막대), 체중(입력+`/api/weight`+라인차트). `recharts@3` 설치. `/api/meals?days=N` 추가. 보고서 빈화면 워딩을 "이번 주 돌아보기/밥로그의 한마디"로 변경. **남은 건 폰 확인(설치·차트 렌더).**
+- **다음 작업:** 확인 후 **Phase 3(돌아보기: 보고서 + 밥로그의 한마디)**. 읽을 문서: `05`(4번), `06`(B). 워딩·톤은 09 Phase 3 메모 참고.
 - **구현 코드:** Next.js 16.2.9. 카카오 로그인(D16)·기록 루프(사진→분석→보정→저장)·R2 사진 보관·**Vercel 배포(bablog.dimad.kr) 동작 확인**. UI 리디자인(D14 톤, Jua+크림+코랄+🍚). 사진 리사이즈/EXIF 제거. dev 로그인 우회(`DEV_AUTH_BYPASS`). 보정 화면 D18 리팩터(끼니 선택 + 항목별 양/단위 스테퍼 + 삭제 되돌리기 + 비음식 가드). **수동 입력(D18): 식약처 라이브 API 검색(`/api/foods/search`) + AI 텍스트 폴백(`/api/foods/estimate`) + 검색 UI(보정 화면 재사용, 음식 더 추가).** 식약처는 방식 A 라이브 호출 확정(D18 갱신).
 
 ## Phase 체크
 - [x] Phase 0 · 프로젝트 셋업 (Neon·Vercel·카카오 로그인 완료)
 - [x] Phase 1 · 기록 루프 (사진 기록 + 수동 입력 + R2 + E2E 저장 동작 확인)
 - [~] Phase 1.5 · PWA화 (브랜딩·manifest·SW 코드 완료, 폰 설치 확인만 남음)
-- [ ] Phase 2 · 조회 (히스토리 + 체중)
+- [~] Phase 2 · 조회 (히스토리+체중 코드 완료, 폰 확인 대기. 수정/삭제는 백로그)
 - [ ] Phase 3 · 보고서 + AI 조언
 - [ ] Phase 4 · 푸시 알림
 
@@ -24,6 +24,7 @@
 | 날짜 | 내용 |
 |---|---|
 | (초기) | 핸드오프 문서 세트 작성. 프로젝트명 밥로그 확정. 스택·아키텍처·스키마·로드맵 정리. |
+| 2026-06-23 | **Phase 2 조회 구현.** 히스토리(`/history`): 일/주/월 토글, 일=날짜이동+합계+끼니리스트(썸네일), 주/월=일별 kcal 막대(Recharts). 체중(`/weight`): 입력폼+`/api/weight`(GET/POST)+기간토글 추세 라인차트+최근리스트. `recharts@3.8.1` 설치(React19 호환, v2 불가). `/api/meals?days=N` 서버 기간조회 추가(월간 100건 상한 문제 해소). 보고서 빈화면 워딩 변경(돌아보기/밥로그의 한마디, D14톤). 수정/삭제는 백로그. 빌드 통과. |
 | 2026-06-23 | **앱 느낌 UX 패스(설치 후 피드백).** globals.css: `overscroll-behavior:none`(당겨서 새로고침·바운스 제거), 탭 하이라이트/선택 제거(입력칸 예외), 스크롤바 숨김. viewport `viewportFit:cover` + 하단탭/본문 `env(safe-area-inset-bottom)`. **뒤로가기 정리:** 하단탭 `replace`(히스토리 안 쌓임 → 탭 어디서든 뒤로 1번에 종료), 기록 페이지 하위화면(분석/검색/보정)은 history 트랩+popstate로 뒤로가기=닫기(입력 보존, 페이지 이탈 방지). 종료 확인 다이얼로그는 안 넣음(안티패턴). |
 | 2026-06-23 | **Phase 1.5 PWA·브랜딩 구현.** Gemini 생성 마스코트(`assets/brand/mascot.png`)의 배경이 투명이 아니라 회색 체커가 픽셀로 박혀 있어 가장자리 플러드필로 제거→`mascot-clean.png`. 거기서 sharp로 파비콘(`app/icon.png`)·PWA 192/512/maskable(`public/icons/`) 파생, OG(`app/opengraph-image.tsx`: 크림+마스코트+Jua "밥로그", 구글폰트 TTF 런타임 로드). `app/manifest.ts`+viewport(theme #FFF8F0), `public/sw.js`(셸 캐싱)+`ServiceWorkerRegister`(prod)+next.config sw 헤더. **프록시 matcher에 opengraph-image/icon.png 공개 제외 추가**(누락 시 카톡 크롤러가 로그인으로 리다이렉트됨). 빌드·로컬 서빙 확인. |
 | 2026-06-23 | **수동 입력(D18) 구현 + Phase 0 완료 처리.** 식약처 라이브 API 재검증 → 이전 "0건"은 한글 URL 미인코딩 아티팩트였고 실제론 정상(김치찌개 356·비빔밥 718건, 부분매칭, 30만 건). **방식 A(라이브 호출) 확정**(B 자체 import 불필요). 필드 매핑 확정(AMT_NUM1=kcal/3=단백/4=지방/6=탄수, SERVING_SIZE 기준, Z10500=1회중량). `lib/food/`(foodApi+types), `/api/foods/search`, `/api/foods/estimate`(AI 폴백), 기록 홈에 검색 UI(보정 화면 재사용·음식 더 추가). 구어체 별칭(공기밥/맨밥/흰밥/밥→쌀밥). 수동 검색 저장 E2E 확인. 빌드 통과. **Phase 0**은 사용자 확인(카카오 로그인·Vercel 배포)으로 완료 처리. 자동완성은 백로그로. |

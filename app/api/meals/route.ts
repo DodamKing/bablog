@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { meals } from "@/lib/db/schema";
 import { getUserId } from "@/lib/auth-helpers";
@@ -9,18 +9,29 @@ import { uploadMealPhoto } from "@/lib/storage/r2";
 export const maxDuration = 30;
 
 // 현재 사용자의 끼니 목록 (최근순).
-export async function GET() {
+// ?days=N → 최근 N일치(개수 상한 의존 X, 히스토리 월간 차트용). 없으면 최근 100건.
+export async function GET(req: NextRequest) {
   const userId = await getUserId();
   if (!userId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const daysRaw = req.nextUrl.searchParams.get("days");
+  const days = daysRaw ? Math.min(400, Math.max(1, parseInt(daysRaw, 10))) : null;
+
+  let where = eq(meals.userId, userId);
+  if (days) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    where = and(eq(meals.userId, userId), gte(meals.eatenAt, since))!;
+  }
+
   const rows = await db
     .select()
     .from(meals)
-    .where(eq(meals.userId, userId))
+    .where(where)
     .orderBy(desc(meals.eatenAt))
-    .limit(100);
+    .limit(days ? 2000 : 100);
 
   return NextResponse.json({ meals: rows });
 }
