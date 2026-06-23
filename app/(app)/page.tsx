@@ -104,6 +104,12 @@ export default function RecordPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "분석 실패");
       const est = json.estimate as MealEstimate;
+      if (est.items.length === 0) {
+        // 비음식/식별 불가 가드
+        setError("음식을 못 찾았어요. 더 잘 보이게 다시 찍어볼까요?");
+        setMode("home");
+        return;
+      }
       setEstimate(est);
       setItems(est.items.map((it) => ({ ...it, currentAmount: it.amount })));
       setRemovedStack([]);
