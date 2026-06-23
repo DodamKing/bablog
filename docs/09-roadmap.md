@@ -17,12 +17,13 @@
 
 ## Phase 1 · 기록 루프 (핵심 MVP)
 **읽을 문서:** `02`, `03`, `04`, `06`(A), `05`(1번 화면)
-- [ ] `lib/ai/` Gemini 어댑터: `analyzeMeal(image)` → JSON
-- [ ] `/api/analyze` route
-- [ ] 기록 홈: 카메라 입력 → 분석 → **보정 화면** → 저장
-- [ ] `/api/meals` POST/GET
-- [ ] 사진 보관 여부 결정 + 반영(보관 시 Blob)
-- [ ] 하단 탭 네비 뼈대(기록/히스토리/체중/보고서 라우트만)
+- [x] `lib/ai/` Gemini 어댑터: `analyzeMeal(image)` → JSON (3.1 Flash Lite, 모델 id 검증됨)
+- [x] `/api/analyze` route
+- [x] 기록 홈: 카메라 입력 → 분석 → **보정 화면** → 저장
+- [x] `/api/meals` POST/GET (user_id 스코프)
+- [x] 사진 보관 결정(D17: Cloudflare R2) + `lib/storage/r2.ts` (자격증명 입력 대기)
+- [x] 하단 탭 네비 뼈대(기록/히스토리/체중/보고서 라우트만)
+- [ ] R2 자격증명 입력 + 브라우저에서 전체 플로우 E2E 확인
 - **완료 기준:** 폰에서 사진 찍어 보정 후 저장 → DB에 들어감.
 
 ## Phase 1.5 · PWA화 (앱처럼 설치)

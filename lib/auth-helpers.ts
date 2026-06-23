@@ -12,3 +12,9 @@ export async function requireUserId(): Promise<string> {
   }
   return session.user.id;
 }
+
+// API route용: 리다이렉트 대신 null 반환 (호출부에서 401 처리).
+export async function getUserId(): Promise<string | null> {
+  const session = await auth();
+  return session?.user?.id ?? null;
+}
