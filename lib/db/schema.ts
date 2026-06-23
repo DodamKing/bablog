@@ -81,6 +81,8 @@ export const meals = pgTable(
     eatenAt: timestamp("eaten_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
+    // 끼니 분류(D18): 아침 | 점심 | 저녁 | 간식. 시간 자동추정 + 사용자 변경. 기존 행 호환 위해 nullable.
+    mealType: text("meal_type").$type<"아침" | "점심" | "저녁" | "간식">(),
     photoUrl: text("photo_url"),
     items: jsonb("items").notNull(),
     kcal: integer("kcal").notNull(),

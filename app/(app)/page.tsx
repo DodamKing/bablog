@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import type { MealEstimate } from "@/lib/ai/types";
+import { compressImage } from "@/lib/image";
 
 type Mode = "home" | "analyzing" | "review" | "saving";
 
@@ -17,7 +18,6 @@ export default function RecordPage() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
-  // 촬영/분석 상태
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
   const [image, setImage] = useState<File | null>(null);
@@ -25,7 +25,6 @@ export default function RecordPage() {
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
   const [note, setNote] = useState("");
 
-  // 오늘 누적
   const [todayMeals, setTodayMeals] = useState<MealRow[]>([]);
 
   async function loadToday() {
@@ -38,7 +37,7 @@ export default function RecordPage() {
         meals.filter((m) => new Date(m.eatenAt).toDateString() === today),
       );
     } catch {
-      /* 무시 — 요약은 보조 정보 */
+      /* 요약은 보조 정보 — 실패해도 무시 */
     }
   }
 
@@ -50,17 +49,20 @@ export default function RecordPage() {
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    e.target.value = ""; // 같은 파일 재선택 허용
+    e.target.value = "";
     if (!file) return;
 
     setError(null);
-    setImage(file);
-    setPreviewUrl(URL.createObjectURL(file));
     setMode("analyzing");
+
+    // 업로드/분석 전에 리사이즈 + EXIF 제거
+    const compressed = await compressImage(file);
+    setImage(compressed);
+    setPreviewUrl(URL.createObjectURL(compressed));
 
     try {
       const fd = new FormData();
-      fd.append("image", file);
+      fd.append("image", compressed);
       const res = await fetch("/api/analyze", { method: "POST", body: fd });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "분석 실패");
@@ -119,7 +121,7 @@ export default function RecordPage() {
         throw new Error(json.error ?? "저장 실패");
       }
       reset();
-      setToast("저장했어요 🍚");
+      setToast("잘 먹었어요 🍚");
       setTimeout(() => setToast(null), 2000);
       loadToday();
     } catch (err) {
@@ -130,39 +132,55 @@ export default function RecordPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
-      {/* 헤더 */}
       <header className="flex items-center justify-between pt-2">
-        <h1 className="text-lg font-bold">🍚 밥로그</h1>
-        <button
-          onClick={() => signOut()}
-          className="text-xs text-neutral-400"
-        >
+        <h1 className="font-display text-2xl text-ink">🍚 밥로그</h1>
+        <button onClick={() => signOut()} className="text-xs text-muted">
           로그아웃
         </button>
       </header>
 
-      {/* 오늘 누적 */}
-      <section className="rounded-2xl bg-neutral-100 px-4 py-3">
-        <p className="text-xs text-neutral-500">오늘 먹은 양</p>
-        <p className="text-2xl font-bold">
-          {todayKcal.toLocaleString()}{" "}
-          <span className="text-base font-normal text-neutral-500">kcal</span>
-        </p>
-        <p className="text-xs text-neutral-400">끼니 {todayMeals.length}개</p>
+      {/* 오늘 누적 — 밥공기 마스코트 */}
+      <section className="rounded-3xl bg-coral-soft px-5 py-5">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm text-ink/55">오늘 먹은 양</p>
+            <p className="font-display text-4xl text-ink">
+              {todayKcal.toLocaleString()}
+              <span className="ml-1 text-lg text-ink/45">kcal</span>
+            </p>
+          </div>
+          <span className="animate-bob text-5xl">🍚</span>
+        </div>
+        <div className="mt-3 flex items-center gap-1">
+          {todayMeals.length === 0 ? (
+            <p className="text-sm text-ink/50">오늘 첫 끼니를 기록해봐요!</p>
+          ) : (
+            <>
+              {todayMeals.slice(0, 8).map((m) => (
+                <span key={m.id} className="text-base">
+                  🍚
+                </span>
+              ))}
+              <span className="ml-1 text-sm text-ink/50">
+                끼니 {todayMeals.length}개
+              </span>
+            </>
+          )}
+        </div>
       </section>
 
       {error && (
-        <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-600">
+        <p className="rounded-2xl bg-coral/10 px-4 py-2.5 text-sm text-coral">
           {error}
         </p>
       )}
 
-      {/* 홈: 촬영 버튼 */}
+      {/* 홈: 촬영 */}
       {(mode === "home" || mode === "analyzing") && (
         <button
           onClick={() => cameraRef.current?.click()}
           disabled={mode === "analyzing"}
-          className="flex flex-1 flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-300 py-16 text-neutral-500 transition active:scale-[0.99] disabled:opacity-60"
+          className="flex flex-1 flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-coral/40 bg-rice py-16 transition active:scale-[0.99] disabled:opacity-70"
         >
           {mode === "analyzing" ? (
             <>
@@ -174,15 +192,17 @@ export default function RecordPage() {
                   className="h-28 w-28 rounded-2xl object-cover"
                 />
               )}
-              <span className="animate-pulse text-sm">분석 중…</span>
+              <span className="animate-pulse font-display text-lg text-coral">
+                맛 분석 중…
+              </span>
             </>
           ) : (
             <>
-              <span className="text-5xl">📷</span>
-              <span className="font-medium">사진 찍어 기록하기</span>
-              <span className="text-xs text-neutral-400">
-                밥 사진 한 장이면 끝
+              <span className="animate-bob text-6xl">📷</span>
+              <span className="font-display text-xl text-ink">
+                사진 찍어 기록하기
               </span>
+              <span className="text-sm text-muted">밥 사진 한 장이면 끝</span>
             </>
           )}
         </button>
@@ -191,13 +211,12 @@ export default function RecordPage() {
       {mode === "home" && (
         <button
           onClick={() => galleryRef.current?.click()}
-          className="rounded-xl bg-neutral-100 py-3 text-sm font-medium text-neutral-600 transition active:scale-95"
+          className="rounded-2xl border border-line bg-rice py-3 text-sm font-medium text-ink/70 transition active:scale-95"
         >
           🖼 갤러리에서 선택
         </button>
       )}
 
-      {/* 카메라(후면) 직접 호출 */}
       <input
         ref={cameraRef}
         type="file"
@@ -206,7 +225,6 @@ export default function RecordPage() {
         onChange={onPick}
         className="hidden"
       />
-      {/* 갤러리 선택 (capture 없음) */}
       <input
         ref={galleryRef}
         type="file"
@@ -223,28 +241,27 @@ export default function RecordPage() {
             <img
               src={previewUrl}
               alt=""
-              className="h-40 w-full rounded-2xl object-cover"
+              className="h-44 w-full rounded-3xl object-cover"
             />
           )}
 
-          {/* 인식 항목 */}
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-semibold">인식된 음식</p>
+            <p className="font-display text-lg text-ink">인식된 음식</p>
             {estimate.items.length === 0 && (
-              <p className="text-sm text-neutral-400">인식된 항목이 없어요.</p>
+              <p className="text-sm text-muted">인식된 항목이 없어요.</p>
             )}
             {estimate.items.map((it, idx) => (
               <div
                 key={idx}
-                className="flex items-center justify-between rounded-xl bg-neutral-50 px-3 py-2"
+                className="flex items-center justify-between rounded-2xl border border-line bg-rice px-4 py-2.5"
               >
                 <div>
-                  <p className="text-sm font-medium">{it.name}</p>
-                  <p className="text-xs text-neutral-400">{it.qty}</p>
+                  <p className="text-sm font-medium text-ink">{it.name}</p>
+                  <p className="text-xs text-muted">{it.qty}</p>
                 </div>
                 <button
                   onClick={() => removeItem(idx)}
-                  className="text-xs text-neutral-400"
+                  className="text-xs text-muted"
                 >
                   삭제
                 </button>
@@ -252,7 +269,6 @@ export default function RecordPage() {
             ))}
           </div>
 
-          {/* 총합 보정 */}
           <div className="grid grid-cols-2 gap-3">
             <NumField
               label="칼로리 (kcal)"
@@ -281,10 +297,10 @@ export default function RecordPage() {
             onChange={(e) => setNote(e.target.value)}
             placeholder="메모 (선택)"
             rows={2}
-            className="rounded-xl border border-neutral-200 px-3 py-2 text-sm"
+            className="rounded-2xl border border-line bg-rice px-4 py-3 text-sm outline-none focus:border-coral/50"
           />
 
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-muted">
             {estimate.notes} · 신뢰도 {estimate.confidence}
           </p>
 
@@ -292,14 +308,14 @@ export default function RecordPage() {
             <button
               onClick={reset}
               disabled={mode === "saving"}
-              className="flex-1 rounded-xl bg-neutral-100 py-3 font-medium text-neutral-600 disabled:opacity-60"
+              className="flex-1 rounded-2xl bg-coral-soft py-3.5 font-medium text-ink/70 disabled:opacity-60"
             >
               취소
             </button>
             <button
               onClick={save}
               disabled={mode === "saving"}
-              className="flex-[2] rounded-xl bg-neutral-900 py-3 font-medium text-white transition active:scale-95 disabled:opacity-60"
+              className="flex-[2] rounded-2xl bg-coral py-3.5 font-display text-lg text-white shadow-sm transition active:scale-95 disabled:opacity-60"
             >
               {mode === "saving" ? "저장 중…" : "저장"}
             </button>
@@ -308,7 +324,7 @@ export default function RecordPage() {
       )}
 
       {toast && (
-        <div className="fixed inset-x-0 bottom-20 z-30 mx-auto w-fit rounded-full bg-neutral-900 px-4 py-2 text-sm text-white shadow-lg">
+        <div className="animate-pop fixed inset-x-0 bottom-20 z-30 mx-auto w-fit rounded-full bg-ink px-5 py-2.5 font-display text-cream shadow-lg">
           {toast}
         </div>
       )}
@@ -327,13 +343,13 @@ function NumField({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-xs text-neutral-500">{label}</span>
+      <span className="text-xs text-muted">{label}</span>
       <input
         type="number"
         inputMode="decimal"
         value={Number.isFinite(value) ? value : 0}
         onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className="rounded-xl border border-neutral-200 px-3 py-2 text-sm"
+        className="rounded-xl border border-line bg-rice px-3 py-2.5 font-display text-lg text-ink outline-none focus:border-coral/50"
       />
     </label>
   );
