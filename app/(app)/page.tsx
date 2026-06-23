@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import type { MealEstimate, MealItem } from "@/lib/ai/types";
+import type { FoodHit } from "@/lib/food/types";
 import { compressImage } from "@/lib/image";
 import { inferMealType, MEAL_TYPES, type MealType } from "@/lib/meal";
 
-type Mode = "home" | "analyzing" | "review" | "saving";
+type Mode = "home" | "analyzing" | "search" | "review" | "saving";
 
 type MealRow = { id: string; eatenAt: string; kcal: number };
 
@@ -37,6 +38,12 @@ export default function RecordPage() {
   >([]);
   const [mealType, setMealType] = useState<MealType>(inferMealType());
   const [note, setNote] = useState("");
+
+  // 수동 입력(D18): 식약처 DB 검색 + AI 폴백
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<FoodHit[]>([]);
+  const [searched, setSearched] = useState(false);
+  const [searchBusy, setSearchBusy] = useState(false);
 
   const [todayMeals, setTodayMeals] = useState<MealRow[]>([]);
 
@@ -162,7 +169,109 @@ export default function RecordPage() {
     setItems([]);
     setRemovedStack([]);
     setNote("");
+    setQuery("");
+    setResults([]);
+    setSearched(false);
     setMode("home");
+  }
+
+  // ── 수동 입력(D18): 검색 → 선택/AI추정 → 보정 화면 재사용 ──────────
+
+  function startManual() {
+    reset();
+    setMode("search");
+  }
+
+  function openSearch() {
+    // 보정 중 "음식 더 추가" — items는 유지한 채 검색만 다시.
+    setQuery("");
+    setResults([]);
+    setSearched(false);
+    setMode("search");
+  }
+
+  async function doSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setSearchBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/foods/search?q=${encodeURIComponent(q)}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "검색 실패");
+      setResults((json.foods as FoodHit[]) ?? []);
+      setSearched(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "검색에 실패했어요.");
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+
+  // FoodHit(기준 양 기준 매크로) → 보정용 항목(1회 제공량을 기본 양으로).
+  function hitToItem(h: FoodHit): MealItem {
+    const amount =
+      h.servingWeight && h.servingWeight > 0 ? h.servingWeight : h.basisAmount;
+    const f = h.basisAmount ? amount / h.basisAmount : 1;
+    return {
+      name: h.name,
+      amount: round1(amount),
+      unit: h.unit,
+      kcal: h.kcal * f,
+      protein_g: h.protein_g * f,
+      carb_g: h.carb_g * f,
+      fat_g: h.fat_g * f,
+    };
+  }
+
+  // 항목들을 보정 화면에 추가(기존 items에 누적). 사진 없는 수동 흐름이라
+  // 합성 estimate를 세워 보정 UI 게이트(estimate 필요)를 만족시킨다.
+  function addItems(newItems: MealItem[], notes: string) {
+    setItems((prev) => {
+      if (prev.length === 0) setMealType(inferMealType());
+      return [...prev, ...newItems.map((it) => ({ ...it, currentAmount: it.amount }))];
+    });
+    setEstimate(
+      (prev) =>
+        prev ?? {
+          items: [],
+          total: { kcal: 0, protein_g: 0, carb_g: 0, fat_g: 0 },
+          confidence: "medium",
+          notes,
+        },
+    );
+    setMode("review");
+  }
+
+  async function aiEstimate() {
+    const q = query.trim();
+    if (!q) return;
+    setSearchBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/foods/estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: q }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "추정 실패");
+      const est = json.estimate as MealEstimate;
+      if (est.items.length === 0) {
+        setError("‘" + q + "’를 추정하지 못했어요. 다른 이름으로 검색해볼까요?");
+        return;
+      }
+      addItems(est.items, "AI 이름 기반 추정값");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "추정에 실패했어요.");
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+
+  function cancelSearch() {
+    if (items.length > 0) setMode("review");
+    else reset();
   }
 
   async function save() {
@@ -291,12 +400,20 @@ export default function RecordPage() {
       )}
 
       {mode === "home" && (
-        <button
-          onClick={() => galleryRef.current?.click()}
-          className="rounded-2xl border border-line bg-rice py-3 text-sm font-medium text-ink/70 transition active:scale-95"
-        >
-          🖼 갤러리에서 선택
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => galleryRef.current?.click()}
+            className="flex-1 rounded-2xl border border-line bg-rice py-3 text-sm font-medium text-ink/70 transition active:scale-95"
+          >
+            🖼 갤러리
+          </button>
+          <button
+            onClick={startManual}
+            className="flex-1 rounded-2xl border border-line bg-rice py-3 text-sm font-medium text-ink/70 transition active:scale-95"
+          >
+            🔍 검색해서 입력
+          </button>
+        </div>
       )}
 
       <input
@@ -314,6 +431,83 @@ export default function RecordPage() {
         onChange={onPick}
         className="hidden"
       />
+
+      {/* 수동 입력: 검색 */}
+      {mode === "search" && (
+        <section className="flex flex-1 flex-col gap-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              doSearch();
+            }}
+            className="flex gap-2"
+          >
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="음식 이름 (예: 김치찌개)"
+              className="flex-1 rounded-2xl border border-line bg-rice px-4 py-3 text-sm outline-none focus:border-coral/50"
+            />
+            <button
+              type="submit"
+              disabled={searchBusy || !query.trim()}
+              className="rounded-2xl bg-coral px-5 font-display text-white transition active:scale-95 disabled:opacity-50"
+            >
+              검색
+            </button>
+          </form>
+
+          {searchBusy && (
+            <p className="animate-pulse py-2 text-center text-sm text-coral">
+              찾는 중…
+            </p>
+          )}
+
+          <div className="flex flex-col gap-2">
+            {results.map((h) => (
+              <button
+                key={h.code}
+                onClick={() => addItems([hitToItem(h)], "식약처 DB")}
+                className="flex items-center justify-between rounded-2xl border border-line bg-rice px-4 py-3 text-left transition active:scale-[0.99]"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-ink">
+                    {h.name}
+                  </span>
+                  <span className="text-xs text-muted">
+                    {h.basisAmount}
+                    {h.unit}당 {Math.round(h.kcal)} kcal
+                    {h.maker ? ` · ${h.maker}` : ""}
+                  </span>
+                </span>
+                <span className="ml-2 shrink-0 font-display text-coral">＋</span>
+              </button>
+            ))}
+          </div>
+
+          {searched && !searchBusy && results.length === 0 && (
+            <p className="text-sm text-muted">검색 결과가 없어요.</p>
+          )}
+
+          {/* AI 폴백: DB에 없으면 이름으로 추정 */}
+          {searched && !searchBusy && query.trim() && (
+            <button
+              onClick={aiEstimate}
+              className="self-start rounded-2xl bg-matcha-soft px-4 py-2.5 text-sm font-medium text-ink/70 transition active:scale-95"
+            >
+              ✨ ‘{query.trim()}’ AI로 추정해서 추가
+            </button>
+          )}
+
+          <button
+            onClick={cancelSearch}
+            className="mt-auto rounded-2xl bg-coral-soft py-3.5 font-medium text-ink/70"
+          >
+            {items.length > 0 ? "보정으로 돌아가기" : "취소"}
+          </button>
+        </section>
+      )}
 
       {/* 보정 화면 */}
       {(mode === "review" || mode === "saving") && estimate && (
@@ -346,9 +540,9 @@ export default function RecordPage() {
 
           {/* 항목별 양 보정 */}
           <div className="flex flex-col gap-2">
-            <p className="font-display text-lg text-ink">인식된 음식</p>
+            <p className="font-display text-lg text-ink">먹은 음식</p>
             {items.length === 0 && (
-              <p className="text-sm text-muted">인식된 항목이 없어요.</p>
+              <p className="text-sm text-muted">항목이 없어요. 음식을 추가해봐요.</p>
             )}
             {items.map((it, idx) => {
               const s = scaled(it);
@@ -426,6 +620,15 @@ export default function RecordPage() {
                 {removedStack.length > 1 ? ` (${removedStack.length})` : ""}
               </button>
             )}
+
+            {/* 검색으로 음식 더 추가 */}
+            <button
+              onClick={openSearch}
+              disabled={mode === "saving"}
+              className="self-start rounded-2xl border border-dashed border-coral/40 px-4 py-2 text-sm text-coral transition active:scale-95 disabled:opacity-60"
+            >
+              🔍 음식 더 추가
+            </button>
           </div>
 
           {/* 합계 (항목에서 자동 계산) */}

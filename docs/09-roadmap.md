@@ -11,8 +11,8 @@
 - [x] `lib/db/schema.ts`에 `meals`, `weight_logs` 정의 (drizzle 패키지 설치 + `drizzle.config.ts` 작성)
 - [x] ~~단일 사용자 잠금(패스코드)~~ → 멀티유저 인증으로 교체(D16): Auth.js v5 + 카카오 + Drizzle 어댑터, JWT 세션. `proxy.ts` 게이트 + `/login` + `requireUserId()` DAL.
 - [x] drizzle + Neon 실제 연결(싱가포르), `db:push` 첫 마이그레이션 — users/accounts/sessions/verification_tokens + meals/weight_logs(user_id)
-- [ ] 카카오 개발자 앱 등록 → `AUTH_KAKAO_ID`/`AUTH_KAKAO_SECRET` + 리다이렉트 URI → 로그인 동작 확인
-- [ ] Vercel 배포 파이프라인 확인 (GitHub 원격 연동 후, env 변수 등록)
+- [x] 카카오 개발자 앱 등록 → `AUTH_KAKAO_ID`/`AUTH_KAKAO_SECRET` + 리다이렉트 URI → 로그인 동작 확인 (사용자 확인)
+- [x] Vercel 배포 파이프라인 확인 (bablog.dimad.kr 동작)
 - **완료 기준:** 카카오 로그인 통과 → 빈 앱이 뜨고, 사용자별 데이터 격리 준비됨. Vercel 배포 확인.
 
 ## Phase 1 · 기록 루프 (핵심 MVP)
@@ -23,8 +23,9 @@
 - [x] `/api/meals` POST/GET (user_id 스코프)
 - [x] 사진 보관 결정(D17: Cloudflare R2) + `lib/storage/r2.ts` (자격증명 입력 대기)
 - [x] 하단 탭 네비 뼈대(기록/히스토리/체중/보고서 라우트만)
-- [ ] R2 자격증명 입력 + 브라우저에서 전체 플로우 E2E 확인
-- **완료 기준:** 폰에서 사진 찍어 보정 후 저장 → DB에 들어감.
+- [x] 수동 입력(D18): 식약처 라이브 검색 + AI 폴백 + 검색 UI(보정 화면 재사용)
+- [x] R2 자격증명 입력 + 브라우저에서 전체 플로우 E2E 확인 (저장→DB 동작 확인)
+- **완료 기준:** 폰에서 사진 찍어/검색해서 보정 후 저장 → DB에 들어감.
 
 ## Phase 1.5 · PWA화 (앱처럼 설치)
 **읽을 문서:** `07`
@@ -62,6 +63,7 @@
 ## Phase 5+ · 계속 붙일 것 (백로그)
 - 일일 목표(kcal/매크로) + 홈 목표 대비 표시
 - 자주 먹는 음식 즐겨찾기/빠른 재기록
+- 수동 검색 자동완성(타이핑 중 식약처 결과 미리보기 — debounce + 별칭 확장)
 - 바코드(Open Food Facts) 보정
 - 데이터 내보내기(JSON/CSV)
 - (필요 시) Capacitor로 감싸 네이티브 앱화

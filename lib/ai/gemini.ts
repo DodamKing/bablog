@@ -49,6 +49,37 @@ export async function analyzeMeal(
   return parseEstimate(res.text ?? "");
 }
 
+// 수동 입력 폴백(D18): DB(식약처)에 없는 음식을 이름만으로 추정.
+const TEXT_PROMPT = `너는 음식 이름(텍스트)만 보고 흔한 1인분 기준 영양을 추정하는 전문가다.
+- 입력한 음식을 보통 어떻게 먹는 1인분 양(amount + 사람이 아는 unit: 그릇/공기/개/조각/인분/ml 등)으로 추정하라. g은 무게로 재는 음식에만.
+- kcal·단백질(g)·탄수화물(g)·지방(g)은 그 amount 기준으로 추정하라. total은 항목 합.
+- 보통 한 가지 음식이지만, "라면+김밥"처럼 여러 개면 항목을 나눠라.
+- 음식이 아니거나 추정 불가면 items를 빈 배열 []로 반환하라.
+- 반드시 아래 JSON 스키마로만, 다른 설명 없이 출력하라.
+
+{
+  "items": [
+    { "name": "신라면", "amount": 1, "unit": "그릇", "kcal": 500, "protein_g": 10, "carb_g": 79, "fat_g": 16 }
+  ],
+  "total": { "kcal": 500, "protein_g": 10, "carb_g": 79, "fat_g": 16 },
+  "confidence": "low | medium | high",
+  "notes": "이름 기반 추정값"
+}`;
+
+export async function estimateMealFromText(
+  text: string,
+): Promise<MealEstimate> {
+  const res = await ai.models.generateContent({
+    model: MODEL,
+    contents: [
+      { role: "user", parts: [{ text: `${TEXT_PROMPT}\n\n음식: ${text}` }] },
+    ],
+    config: { responseMimeType: "application/json", temperature: 0.2 },
+  });
+
+  return parseEstimate(res.text ?? "");
+}
+
 // 코드펜스 제거 후 안전 파싱 + 최소 정규화.
 function parseEstimate(raw: string): MealEstimate {
   const cleaned = raw
