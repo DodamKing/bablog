@@ -2,16 +2,23 @@
 
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
-import type { MealEstimate } from "@/lib/ai/types";
+import type { MealEstimate, MealItem } from "@/lib/ai/types";
 import { compressImage } from "@/lib/image";
+import { inferMealType, MEAL_TYPES, type MealType } from "@/lib/meal";
 
 type Mode = "home" | "analyzing" | "review" | "saving";
 
-type MealRow = {
-  id: string;
-  eatenAt: string;
-  kcal: number;
-};
+type MealRow = { id: string; eatenAt: string; kcal: number };
+
+// 보정용 항목: AI 기준 양/매크로(base) + 사용자가 조정한 현재 양(빈칸 허용 위해 NaN 가능).
+type DraftItem = MealItem & { currentAmount: number };
+
+// 단위별 +/- 증감폭
+function stepFor(unit: string): number {
+  if (unit === "g" || unit === "ml") return 10;
+  if (["개", "조각", "장", "판", "컵", "알", "줄"].includes(unit)) return 1;
+  return 0.5;
+}
 
 export default function RecordPage() {
   const [mode, setMode] = useState<Mode>("home");
@@ -22,7 +29,13 @@ export default function RecordPage() {
   const galleryRef = useRef<HTMLInputElement>(null);
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
+  const [items, setItems] = useState<DraftItem[]>([]);
+  const [removedStack, setRemovedStack] = useState<
+    { item: DraftItem; index: number }[]
+  >([]);
+  const [mealType, setMealType] = useState<MealType>(inferMealType());
   const [note, setNote] = useState("");
 
   const [todayMeals, setTodayMeals] = useState<MealRow[]>([]);
@@ -47,6 +60,31 @@ export default function RecordPage() {
 
   const todayKcal = todayMeals.reduce((s, m) => s + (m.kcal || 0), 0);
 
+  // 현재 양 기준 비례 스케일 (빈칸/NaN은 0으로 계산)
+  function scaled(it: DraftItem) {
+    const amt = Number.isFinite(it.currentAmount) ? it.currentAmount : 0;
+    const f = it.amount ? amt / it.amount : 1;
+    return {
+      kcal: it.kcal * f,
+      protein_g: it.protein_g * f,
+      carb_g: it.carb_g * f,
+      fat_g: it.fat_g * f,
+    };
+  }
+
+  const total = items.reduce(
+    (acc, it) => {
+      const s = scaled(it);
+      return {
+        kcal: acc.kcal + s.kcal,
+        protein_g: acc.protein_g + s.protein_g,
+        carb_g: acc.carb_g + s.carb_g,
+        fat_g: acc.fat_g + s.fat_g,
+      };
+    },
+    { kcal: 0, protein_g: 0, carb_g: 0, fat_g: 0 },
+  );
+
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -55,7 +93,6 @@ export default function RecordPage() {
     setError(null);
     setMode("analyzing");
 
-    // 업로드/분석 전에 리사이즈 + EXIF 제거
     const compressed = await compressImage(file);
     setImage(compressed);
     setPreviewUrl(URL.createObjectURL(compressed));
@@ -66,7 +103,11 @@ export default function RecordPage() {
       const res = await fetch("/api/analyze", { method: "POST", body: fd });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "분석 실패");
-      setEstimate(json.estimate as MealEstimate);
+      const est = json.estimate as MealEstimate;
+      setEstimate(est);
+      setItems(est.items.map((it) => ({ ...it, currentAmount: it.amount })));
+      setRemovedStack([]);
+      setMealType(inferMealType());
       setMode("review");
     } catch (err) {
       setError(err instanceof Error ? err.message : "분석에 실패했어요.");
@@ -74,16 +115,37 @@ export default function RecordPage() {
     }
   }
 
-  function patchTotal(key: keyof MealEstimate["total"], value: number) {
-    setEstimate((prev) =>
-      prev ? { ...prev, total: { ...prev.total, [key]: value } } : prev,
+  function setAmount(idx: number, value: number) {
+    setItems((prev) =>
+      prev.map((it, i) => (i === idx ? { ...it, currentAmount: value } : it)),
+    );
+  }
+
+  function bump(idx: number, dir: 1 | -1) {
+    setItems((prev) =>
+      prev.map((it, i) => {
+        if (i !== idx) return it;
+        const base = Number.isFinite(it.currentAmount) ? it.currentAmount : 0;
+        const next = Math.max(0, round1(base + dir * stepFor(it.unit)));
+        return { ...it, currentAmount: next };
+      }),
     );
   }
 
   function removeItem(idx: number) {
-    setEstimate((prev) =>
-      prev ? { ...prev, items: prev.items.filter((_, i) => i !== idx) } : prev,
-    );
+    setRemovedStack((prev) => [...prev, { item: items[idx], index: idx }]);
+    setItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function undoRemove() {
+    if (removedStack.length === 0) return;
+    const last = removedStack[removedStack.length - 1];
+    setItems((prev) => {
+      const next = [...prev];
+      next.splice(Math.min(last.index, next.length), 0, last.item);
+      return next;
+    });
+    setRemovedStack((prev) => prev.slice(0, -1));
   }
 
   function reset() {
@@ -91,24 +153,38 @@ export default function RecordPage() {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setEstimate(null);
+    setItems([]);
+    setRemovedStack([]);
     setNote("");
     setMode("home");
   }
 
   async function save() {
-    if (!estimate) return;
     setMode("saving");
     setError(null);
     try {
+      const payloadItems = items.map((it) => {
+        const s = scaled(it);
+        return {
+          name: it.name,
+          amount: Number.isFinite(it.currentAmount) ? it.currentAmount : 0,
+          unit: it.unit,
+          kcal: Math.round(s.kcal),
+          protein_g: round1(s.protein_g),
+          carb_g: round1(s.carb_g),
+          fat_g: round1(s.fat_g),
+        };
+      });
       const fd = new FormData();
       fd.append(
         "data",
         JSON.stringify({
-          items: estimate.items,
-          kcal: estimate.total.kcal,
-          protein_g: estimate.total.protein_g,
-          carb_g: estimate.total.carb_g,
-          fat_g: estimate.total.fat_g,
+          items: payloadItems,
+          kcal: Math.round(total.kcal),
+          protein_g: round1(total.protein_g),
+          carb_g: round1(total.carb_g),
+          fat_g: round1(total.fat_g),
+          mealType,
           note,
           aiRaw: estimate,
         }),
@@ -139,7 +215,7 @@ export default function RecordPage() {
         </button>
       </header>
 
-      {/* 오늘 누적 — 밥공기 마스코트 */}
+      {/* 오늘 누적 */}
       <section className="rounded-3xl bg-coral-soft px-5 py-5">
         <div className="flex items-start justify-between">
           <div>
@@ -245,51 +321,118 @@ export default function RecordPage() {
             />
           )}
 
-          <div className="flex flex-col gap-2">
-            <p className="font-display text-lg text-ink">인식된 음식</p>
-            {estimate.items.length === 0 && (
-              <p className="text-sm text-muted">인식된 항목이 없어요.</p>
-            )}
-            {estimate.items.map((it, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between rounded-2xl border border-line bg-rice px-4 py-2.5"
+          {/* 끼니 선택 */}
+          <div className="flex gap-2">
+            {MEAL_TYPES.map((m) => (
+              <button
+                key={m}
+                onClick={() => setMealType(m)}
+                className={`flex-1 rounded-2xl py-2 text-sm transition ${
+                  mealType === m
+                    ? "bg-coral font-display text-white"
+                    : "border border-line bg-rice text-ink/60"
+                }`}
               >
-                <div>
-                  <p className="text-sm font-medium text-ink">{it.name}</p>
-                  <p className="text-xs text-muted">{it.qty}</p>
-                </div>
-                <button
-                  onClick={() => removeItem(idx)}
-                  className="text-xs text-muted"
-                >
-                  삭제
-                </button>
-              </div>
+                {m}
+              </button>
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <NumField
-              label="칼로리 (kcal)"
-              value={estimate.total.kcal}
-              onChange={(v) => patchTotal("kcal", v)}
-            />
-            <NumField
-              label="단백질 (g)"
-              value={estimate.total.protein_g}
-              onChange={(v) => patchTotal("protein_g", v)}
-            />
-            <NumField
-              label="탄수 (g)"
-              value={estimate.total.carb_g}
-              onChange={(v) => patchTotal("carb_g", v)}
-            />
-            <NumField
-              label="지방 (g)"
-              value={estimate.total.fat_g}
-              onChange={(v) => patchTotal("fat_g", v)}
-            />
+          {/* 항목별 양 보정 */}
+          <div className="flex flex-col gap-2">
+            <p className="font-display text-lg text-ink">인식된 음식</p>
+            {items.length === 0 && (
+              <p className="text-sm text-muted">인식된 항목이 없어요.</p>
+            )}
+            {items.map((it, idx) => {
+              const s = scaled(it);
+              return (
+                <div
+                  key={idx}
+                  className="flex flex-col gap-2.5 rounded-2xl border border-line bg-rice px-4 py-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-ink">{it.name}</p>
+                    <button
+                      onClick={() => removeItem(idx)}
+                      className="text-sm text-muted"
+                      aria-label="삭제"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    {/* 스테퍼 */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => bump(idx, -1)}
+                        className="size-8 rounded-full bg-coral-soft text-lg leading-none text-ink/70 transition active:scale-90"
+                        aria-label="줄이기"
+                      >
+                        −
+                      </button>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        value={
+                          Number.isFinite(it.currentAmount)
+                            ? it.currentAmount
+                            : ""
+                        }
+                        onFocus={(e) => e.target.select()}
+                        onChange={(e) =>
+                          setAmount(
+                            idx,
+                            e.target.value === ""
+                              ? NaN
+                              : parseFloat(e.target.value),
+                          )
+                        }
+                        className="w-14 rounded-xl border border-line bg-cream px-1 py-1.5 text-center font-display text-ink outline-none focus:border-coral/50"
+                      />
+                      <button
+                        onClick={() => bump(idx, 1)}
+                        className="size-8 rounded-full bg-coral-soft text-lg leading-none text-ink/70 transition active:scale-90"
+                        aria-label="늘리기"
+                      >
+                        +
+                      </button>
+                      <span className="ml-0.5 text-sm text-muted">
+                        {it.unit}
+                      </span>
+                    </div>
+                    <span className="font-display text-coral">
+                      {Math.round(s.kcal)} kcal
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* 삭제 되돌리기 */}
+            {removedStack.length > 0 && (
+              <button
+                onClick={undoRemove}
+                className="self-start text-xs text-ink/50 underline underline-offset-2"
+              >
+                ‘{removedStack[removedStack.length - 1].item.name}’ 삭제됨 ·
+                되돌리기
+                {removedStack.length > 1 ? ` (${removedStack.length})` : ""}
+              </button>
+            )}
+          </div>
+
+          {/* 합계 (항목에서 자동 계산) */}
+          <div className="rounded-2xl bg-matcha-soft px-4 py-3">
+            <p className="text-xs text-ink/50">합계</p>
+            <p className="font-display text-2xl text-ink">
+              {Math.round(total.kcal).toLocaleString()}
+              <span className="ml-1 text-base text-ink/45">kcal</span>
+            </p>
+            <p className="mt-0.5 text-xs text-ink/55">
+              단백질 {round1(total.protein_g)}g · 탄수 {round1(total.carb_g)}g ·
+              지방 {round1(total.fat_g)}g
+            </p>
           </div>
 
           <textarea
@@ -332,25 +475,6 @@ export default function RecordPage() {
   );
 }
 
-function NumField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <label className="flex flex-col gap-1">
-      <span className="text-xs text-muted">{label}</span>
-      <input
-        type="number"
-        inputMode="decimal"
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className="rounded-xl border border-line bg-rice px-3 py-2.5 font-display text-lg text-ink outline-none focus:border-coral/50"
-      />
-    </label>
-  );
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }

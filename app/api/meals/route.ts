@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     .values({
       userId,
       ...(data.eatenAt ? { eatenAt: new Date(data.eatenAt) } : {}),
+      mealType: data.mealType ?? null,
       photoUrl,
       items: data.items ?? [],
       kcal: Math.round(Number(data.kcal) || 0),
