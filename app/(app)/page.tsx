@@ -18,7 +18,8 @@ export default function RecordPage() {
   const [toast, setToast] = useState<string | null>(null);
 
   // 촬영/분석 상태
-  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
@@ -159,7 +160,7 @@ export default function RecordPage() {
       {/* 홈: 촬영 버튼 */}
       {(mode === "home" || mode === "analyzing") && (
         <button
-          onClick={() => fileRef.current?.click()}
+          onClick={() => cameraRef.current?.click()}
           disabled={mode === "analyzing"}
           className="flex flex-1 flex-col items-center justify-center gap-3 rounded-3xl border-2 border-dashed border-neutral-300 py-16 text-neutral-500 transition active:scale-[0.99] disabled:opacity-60"
         >
@@ -187,11 +188,29 @@ export default function RecordPage() {
         </button>
       )}
 
+      {mode === "home" && (
+        <button
+          onClick={() => galleryRef.current?.click()}
+          className="rounded-xl bg-neutral-100 py-3 text-sm font-medium text-neutral-600 transition active:scale-95"
+        >
+          🖼 갤러리에서 선택
+        </button>
+      )}
+
+      {/* 카메라(후면) 직접 호출 */}
       <input
-        ref={fileRef}
+        ref={cameraRef}
         type="file"
         accept="image/*"
         capture="environment"
+        onChange={onPick}
+        className="hidden"
+      />
+      {/* 갤러리 선택 (capture 없음) */}
+      <input
+        ref={galleryRef}
+        type="file"
+        accept="image/*"
         onChange={onPick}
         className="hidden"
       />
