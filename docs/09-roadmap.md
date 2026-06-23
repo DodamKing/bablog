@@ -29,11 +29,11 @@
 
 ## Phase 1.5 · PWA화 (앱처럼 설치)
 **읽을 문서:** `07`
-- [ ] **브랜딩 패스** — 로고 1개에서: 파비콘(`app/icon`), PWA 아이콘(192/512/maskable), 카카오 동의 화면 아이콘 / + OG 공유 이미지(`app/opengraph-image`, 1200×630)
-  - 안드로이드 전용(D2)이라 애플 터치 아이콘은 생략. 메타데이터 텍스트(title/description/metadataBase/lang=ko)는 Phase 1에서 선반영됨.
-- [ ] manifest + 위 아이콘 연결
-- [ ] 서비스 워커(셸 캐싱)
-- [ ] 안드로이드 홈 설치 → standalone 확인 (Lighthouse PWA 통과)
+- [x] **브랜딩 패스** — 마스코트 1장(`assets/brand/mascot.png`, 체커배경 플러드필 제거→`mascot-clean.png`)에서 sharp로 파생: 파비콘(`app/icon.png`), PWA 아이콘(192/512/maskable, `public/icons/`), OG(`app/opengraph-image.tsx`, 1200×630, 마스코트+Jua "밥로그" 합성). 기본 favicon.ico 제거.
+  - 안드로이드 전용(D2)이라 애플 터치 아이콘은 생략. 카카오 동의화면 아이콘은 192 재사용.
+- [x] manifest(`app/manifest.ts`) + 아이콘 연결 + theme/viewport(크림 #FFF8F0)
+- [x] 서비스 워커(`public/sw.js`, 셸 캐싱 SWR + 네비 네트워크우선) + 등록(`ServiceWorkerRegister`, prod만) + sw.js 헤더(next.config). 프록시 matcher에 OG/icon/manifest/sw 공개 제외 추가(크롤러 접근).
+- [ ] **(사용자)** 안드로이드 홈 설치 → standalone 확인 (Lighthouse PWA 통과)
 - **완료 기준:** 폰 홈 화면에 밥로그 아이콘, 전체화면 실행. 카톡 공유 시 미리보기 정상.
 
 ## Phase 2 · 조회 (히스토리 + 체중)
