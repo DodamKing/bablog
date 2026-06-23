@@ -23,6 +23,34 @@ body {
   font-family: var(--font-body);
 }
 
+/* ── 앱처럼 보이게 (PWA standalone) ───────────────────────────── */
+/* 1) 당겨서 새로고침·끝에서 바운스 제거 */
+html,
+body {
+  overscroll-behavior: none;
+}
+/* 2) 탭 하이라이트 제거 + UI는 길게눌러 선택 안 되게(입력칸은 예외) */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input,
+textarea,
+[contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+/* 옵션) 스크롤바 숨김 (기능은 유지) */
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
 /* 저장/등장용 통통 튀는 애니메이션 (시그니처) */
 @keyframes pop {
   0% {

@@ -7,7 +7,7 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-md flex-1 flex-col pb-16">
+    <div className="mx-auto flex w-full max-w-md flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))]">
       {children}
       <BottomNav />
     </div>

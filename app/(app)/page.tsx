@@ -321,6 +321,30 @@ export default function RecordPage() {
     }
   }
 
+  // 안드로이드 뒤로가기로 하위 화면(사진분석/검색/보정)을 "닫기"로 처리.
+  // 열릴 때 히스토리에 트랩 한 칸을 넣고, 뒤로가기(popstate)를 가로채 home으로 닫는다.
+  // → 입력 중 끼니가 페이지 이탈로 날아가는 걸 막고, 뒤로가기가 네이티브 "닫기"처럼 동작.
+  const subOpen = mode === "search" || mode === "review" || mode === "analyzing";
+  const closeRef = useRef<() => void>(() => {});
+  closeRef.current = reset;
+  useEffect(() => {
+    if (!subOpen) return;
+    window.history.pushState({ bablogSub: true }, "");
+    let poppedByBack = false;
+    const onPop = () => {
+      poppedByBack = true;
+      closeRef.current();
+    };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      // UI로 닫은 경우(취소/저장)엔 우리가 넣은 트랩 칸을 직접 회수.
+      // 탭 이동(replace)으로 빠진 경우엔 state가 바뀌어 있어 건드리지 않음.
+      const st = window.history.state as { bablogSub?: boolean } | null;
+      if (!poppedByBack && st?.bablogSub) window.history.back();
+    };
+  }, [subOpen]);
+
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
       <header className="flex items-center justify-between pt-2">

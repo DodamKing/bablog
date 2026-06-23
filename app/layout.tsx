@@ -17,6 +17,8 @@ export const metadata: Metadata = {
 // 모바일 주소창/상태바 색 (D14 크림). PWA standalone에서도 일관.
 export const viewport: Viewport = {
   themeColor: "#FFF8F0",
+  // 안전영역(env safe-area-inset) 사용하려면 cover 필요 — 하단 제스처바 회피.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

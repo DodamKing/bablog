@@ -14,7 +14,7 @@ export default function BottomNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-rice/95 backdrop-blur">
+    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-rice/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
       <ul className="mx-auto flex max-w-md">
         {tabs.map((tab) => {
           const active =
@@ -23,6 +23,7 @@ export default function BottomNav() {
             <li key={tab.href} className="flex-1">
               <Link
                 href={tab.href}
+                replace
                 className={`flex flex-col items-center gap-0.5 py-2 text-xs transition ${
                   active ? "text-coral" : "text-muted"
                 }`}
