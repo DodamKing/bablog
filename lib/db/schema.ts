@@ -8,6 +8,7 @@ import {
   numeric,
   primaryKey,
   index,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 
@@ -119,5 +120,26 @@ export const weightLogs = pgTable(
   },
   (table) => [
     index("weight_logs_user_logged_at_idx").on(table.userId, table.loggedAt),
+  ],
+);
+
+// Phase 3: 기간(주/월)당 "마지막 생성 결과" 1개만 보관 — 탭 이동해도 안 사라지게.
+// summaryFingerprint로 그때 집계와 지금 집계가 같은지 비교해 변경 여부(stale)만 알려줌(자동 재호출 없음).
+export const reports = pgTable(
+  "reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    periodLabel: text("period_label").$type<"주" | "월">().notNull(),
+    reportText: text("report_text").notNull(),
+    summaryFingerprint: text("summary_fingerprint").notNull(),
+    generatedAt: timestamp("generated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("reports_user_period_idx").on(table.userId, table.periodLabel),
   ],
 );

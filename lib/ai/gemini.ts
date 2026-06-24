@@ -1,6 +1,7 @@
 import "server-only";
 import { GoogleGenAI } from "@google/genai";
-import type { MealEstimate, MealItem } from "./types";
+import type { MealEstimate, MealItem, ReportPeriodSummary, ReportTrendPoint } from "./types";
+import { averageOf } from "@/lib/report/summarize";
 
 // ── 모델 교체 지점 (D11) ── 변경 시 여기 한 줄만 수정.
 const MODEL = "gemini-3.1-flash-lite";
@@ -78,6 +79,76 @@ export async function estimateMealFromText(
   });
 
   return parseEstimate(res.text ?? "");
+}
+
+// 보고서(06-B, Phase 3): 기간 집계를 받아 "밥로그의 한마디"를 자연어로.
+// 톤(09 Phase 3 확정): 회고·응원, "조언/평가"식 훈수 금지. JSON 아니라 평문 텍스트라 responseMimeType 안 씀.
+const REPORT_PROMPT = `너는 "밥로그" 앱의 마스코트야. 사용자의 한 주/달 식사 기록을 보고 다정하게 한마디 건네는 역할이다.
+- 입력으로 받은 기간 집계(일별 kcal/매크로, 체중 추세)를 바탕으로 사실 중심으로 짧게 요약하라: 평균 섭취량, 매크로 분포, 끼니 패턴(데이터에 드러나는 점만), 체중 변화와의 연결(체중 데이터가 있을 때만).
+- 최근 추이(과거 여러 기간의 평균)가 같이 주어지면 자연스럽게 한 줄로 언급해도 좋다 — 한두 개면 "직전보다 늘었다/줄었다/비슷하다", 여러 개면 전체적인 흐름(꾸준히 늘어남/줄어듦/오르내림)으로. 주어지지 않으면 비교 언급하지 마라.
+- 조언은 균형 잡히고 비강압적으로. 극단적 칼로리 제한·단식·특정 음식 금지 같은 강한 처방 금지. "이렇게 해야 한다"는 훈수·평가 톤 금지 — 다정하게 회고하고 응원하는 톤으로.
+- 의학적 단정·진단 금지. 필요하면 "전문가와 상담해보는 것도 좋아요" 정도만 가볍게.
+- 해요체로, 2~4문단의 짧은 자연어로. 제목·markdown 기호 없이 본문만 출력하라.
+- 기록이 며칠 안 되면 평가하지 말고 "조금 더 모이면 더 잘 보일 거예요" 같은 가벼운 톤으로.`;
+
+export async function generateReport(
+  summary: ReportPeriodSummary,
+  trend: ReportTrendPoint[] = [],
+): Promise<string> {
+  const res = await ai.models.generateContent({
+    model: MODEL,
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: `${REPORT_PROMPT}\n\n${formatSummaryForPrompt(summary, trend)}` }],
+      },
+    ],
+    config: { temperature: 0.7 },
+  });
+
+  return (res.text ?? "").trim();
+}
+
+function formatSummaryForPrompt(s: ReportPeriodSummary, trend: ReportTrendPoint[]): string {
+  const lines = [`기간: 이번 ${s.periodLabel}`, "", "일별 기록:"];
+
+  for (const d of s.days) {
+    lines.push(
+      `${d.date}: ${Math.round(d.kcal)}kcal (단백 ${round1(d.protein_g)}g/탄수 ${round1(d.carb_g)}g/지방 ${round1(d.fat_g)}g), 끼니 ${d.mealCount}회`,
+    );
+  }
+
+  const avg = averageOf(s.days);
+  if (avg) {
+    lines.push(
+      "",
+      `평균(기록한 ${avg.recordedDays}일 기준): ${avg.avgKcal}kcal, 단백 ${avg.avgProteinG}g, 탄수 ${avg.avgCarbG}g, 지방 ${avg.avgFatG}g`,
+    );
+  }
+
+  if (trend.length > 0) {
+    lines.push("", "최근 추이(오래된 기간 → 최근 기간 순, 이번 기간 제외):");
+    for (const t of trend) {
+      lines.push(
+        `${t.rangeStart}~${t.rangeEnd}: ${t.avgKcal}kcal (단백 ${t.avgProteinG}g, 기록 ${t.recordedDays}일)`,
+      );
+    }
+  }
+
+  if (s.weightPoints.length >= 2) {
+    const first = s.weightPoints[0];
+    const last = s.weightPoints[s.weightPoints.length - 1];
+    lines.push(
+      "",
+      `체중 추세: ${first.date} ${first.weightKg}kg → ${last.date} ${last.weightKg}kg (변화 ${round1(last.weightKg - first.weightKg)}kg)`,
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
 }
 
 // 코드펜스 제거 후 안전 파싱 + 최소 정규화.
