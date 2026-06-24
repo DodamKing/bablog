@@ -5,21 +5,14 @@ import { signOut } from "next-auth/react";
 import type { MealEstimate, MealItem } from "@/lib/ai/types";
 import type { FoodHit } from "@/lib/food/types";
 import { compressImage } from "@/lib/image";
-import { inferMealType, MEAL_TYPES, type MealType } from "@/lib/meal";
+import { inferMealType, type MealType } from "@/lib/meal";
+import { useDraftItems } from "@/lib/useDraftItems";
+import { useBackTrap } from "@/lib/useBackTrap";
+import MealEditor from "@/components/MealEditor";
 
 type Mode = "home" | "analyzing" | "search" | "review" | "saving";
 
 type MealRow = { id: string; eatenAt: string; kcal: number };
-
-// 보정용 항목: AI 기준 양/매크로(base) + 사용자가 조정한 현재 양(빈칸 허용 위해 NaN 가능).
-type DraftItem = MealItem & { currentAmount: number };
-
-// 단위별 +/- 증감폭
-function stepFor(unit: string): number {
-  if (unit === "g" || unit === "ml") return 10;
-  if (["개", "조각", "장", "판", "컵", "알", "줄"].includes(unit)) return 1;
-  return 0.5;
-}
 
 export default function RecordPage() {
   const [mode, setMode] = useState<Mode>("home");
@@ -32,10 +25,7 @@ export default function RecordPage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const [estimate, setEstimate] = useState<MealEstimate | null>(null);
-  const [items, setItems] = useState<DraftItem[]>([]);
-  const [removedStack, setRemovedStack] = useState<
-    { item: DraftItem; index: number }[]
-  >([]);
+  const draft = useDraftItems();
   const [mealType, setMealType] = useState<MealType>(inferMealType());
   const [note, setNote] = useState("");
 
@@ -67,31 +57,6 @@ export default function RecordPage() {
 
   const todayKcal = todayMeals.reduce((s, m) => s + (m.kcal || 0), 0);
 
-  // 현재 양 기준 비례 스케일 (빈칸/NaN은 0으로 계산)
-  function scaled(it: DraftItem) {
-    const amt = Number.isFinite(it.currentAmount) ? it.currentAmount : 0;
-    const f = it.amount ? amt / it.amount : 1;
-    return {
-      kcal: it.kcal * f,
-      protein_g: it.protein_g * f,
-      carb_g: it.carb_g * f,
-      fat_g: it.fat_g * f,
-    };
-  }
-
-  const total = items.reduce(
-    (acc, it) => {
-      const s = scaled(it);
-      return {
-        kcal: acc.kcal + s.kcal,
-        protein_g: acc.protein_g + s.protein_g,
-        carb_g: acc.carb_g + s.carb_g,
-        fat_g: acc.fat_g + s.fat_g,
-      };
-    },
-    { kcal: 0, protein_g: 0, carb_g: 0, fat_g: 0 },
-  );
-
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -118,8 +83,7 @@ export default function RecordPage() {
         return;
       }
       setEstimate(est);
-      setItems(est.items.map((it) => ({ ...it, currentAmount: it.amount })));
-      setRemovedStack([]);
+      draft.reset(est.items);
       setMealType(inferMealType());
       setMode("review");
     } catch (err) {
@@ -128,46 +92,12 @@ export default function RecordPage() {
     }
   }
 
-  function setAmount(idx: number, value: number) {
-    setItems((prev) =>
-      prev.map((it, i) => (i === idx ? { ...it, currentAmount: value } : it)),
-    );
-  }
-
-  function bump(idx: number, dir: 1 | -1) {
-    setItems((prev) =>
-      prev.map((it, i) => {
-        if (i !== idx) return it;
-        const base = Number.isFinite(it.currentAmount) ? it.currentAmount : 0;
-        const next = Math.max(0, round1(base + dir * stepFor(it.unit)));
-        return { ...it, currentAmount: next };
-      }),
-    );
-  }
-
-  function removeItem(idx: number) {
-    setRemovedStack((prev) => [...prev, { item: items[idx], index: idx }]);
-    setItems((prev) => prev.filter((_, i) => i !== idx));
-  }
-
-  function undoRemove() {
-    if (removedStack.length === 0) return;
-    const last = removedStack[removedStack.length - 1];
-    setItems((prev) => {
-      const next = [...prev];
-      next.splice(Math.min(last.index, next.length), 0, last.item);
-      return next;
-    });
-    setRemovedStack((prev) => prev.slice(0, -1));
-  }
-
   function reset() {
     setImage(null);
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
     setEstimate(null);
-    setItems([]);
-    setRemovedStack([]);
+    draft.reset([]);
     setNote("");
     setQuery("");
     setResults([]);
@@ -227,10 +157,8 @@ export default function RecordPage() {
   // 항목들을 보정 화면에 추가(기존 items에 누적). 사진 없는 수동 흐름이라
   // 합성 estimate를 세워 보정 UI 게이트(estimate 필요)를 만족시킨다.
   function addItems(newItems: MealItem[], notes: string) {
-    setItems((prev) => {
-      if (prev.length === 0) setMealType(inferMealType());
-      return [...prev, ...newItems.map((it) => ({ ...it, currentAmount: it.amount }))];
-    });
+    if (draft.items.length === 0) setMealType(inferMealType());
+    draft.addItems(newItems);
     setEstimate(
       (prev) =>
         prev ?? {
@@ -270,7 +198,7 @@ export default function RecordPage() {
   }
 
   function cancelSearch() {
-    if (items.length > 0) setMode("review");
+    if (draft.items.length > 0) setMode("review");
     else reset();
   }
 
@@ -278,27 +206,11 @@ export default function RecordPage() {
     setMode("saving");
     setError(null);
     try {
-      const payloadItems = items.map((it) => {
-        const s = scaled(it);
-        return {
-          name: it.name,
-          amount: Number.isFinite(it.currentAmount) ? it.currentAmount : 0,
-          unit: it.unit,
-          kcal: Math.round(s.kcal),
-          protein_g: round1(s.protein_g),
-          carb_g: round1(s.carb_g),
-          fat_g: round1(s.fat_g),
-        };
-      });
       const fd = new FormData();
       fd.append(
         "data",
         JSON.stringify({
-          items: payloadItems,
-          kcal: Math.round(total.kcal),
-          protein_g: round1(total.protein_g),
-          carb_g: round1(total.carb_g),
-          fat_g: round1(total.fat_g),
+          ...draft.toPayload(),
           mealType,
           note,
           aiRaw: estimate,
@@ -321,29 +233,11 @@ export default function RecordPage() {
     }
   }
 
-  // 안드로이드 뒤로가기로 하위 화면(사진분석/검색/보정)을 "닫기"로 처리.
-  // 열릴 때 히스토리에 트랩 한 칸을 넣고, 뒤로가기(popstate)를 가로채 home으로 닫는다.
-  // → 입력 중 끼니가 페이지 이탈로 날아가는 걸 막고, 뒤로가기가 네이티브 "닫기"처럼 동작.
-  const subOpen = mode === "search" || mode === "review" || mode === "analyzing";
-  const closeRef = useRef<() => void>(() => {});
-  closeRef.current = reset;
-  useEffect(() => {
-    if (!subOpen) return;
-    window.history.pushState({ bablogSub: true }, "");
-    let poppedByBack = false;
-    const onPop = () => {
-      poppedByBack = true;
-      closeRef.current();
-    };
-    window.addEventListener("popstate", onPop);
-    return () => {
-      window.removeEventListener("popstate", onPop);
-      // UI로 닫은 경우(취소/저장)엔 우리가 넣은 트랩 칸을 직접 회수.
-      // 탭 이동(replace)으로 빠진 경우엔 state가 바뀌어 있어 건드리지 않음.
-      const st = window.history.state as { bablogSub?: boolean } | null;
-      if (!poppedByBack && st?.bablogSub) window.history.back();
-    };
-  }, [subOpen]);
+  // 사진분석/검색/보정/저장중 화면은 안드로이드 뒤로가기로 "닫기" 처리(useBackTrap).
+  // saving도 포함해야 저장 중 깜빡 닫혔다 다시 열리며 트랩 칸이 어긋나는 일이 없음.
+  const subOpen =
+    mode === "search" || mode === "review" || mode === "analyzing" || mode === "saving";
+  useBackTrap(subOpen, reset);
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
@@ -528,175 +422,39 @@ export default function RecordPage() {
             onClick={cancelSearch}
             className="mt-auto rounded-2xl bg-coral-soft py-3.5 font-medium text-ink/70"
           >
-            {items.length > 0 ? "보정으로 돌아가기" : "취소"}
+            {draft.items.length > 0 ? "보정으로 돌아가기" : "취소"}
           </button>
         </section>
       )}
 
       {/* 보정 화면 */}
       {(mode === "review" || mode === "saving") && estimate && (
-        <section className="flex flex-col gap-4">
-          {previewUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={previewUrl}
-              alt=""
-              className="h-44 w-full rounded-3xl object-cover"
-            />
-          )}
-
-          {/* 끼니 선택 */}
-          <div className="flex gap-2">
-            {MEAL_TYPES.map((m) => (
-              <button
-                key={m}
-                onClick={() => setMealType(m)}
-                className={`flex-1 rounded-2xl py-2 text-sm transition ${
-                  mealType === m
-                    ? "bg-coral font-display text-white"
-                    : "border border-line bg-rice text-ink/60"
-                }`}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-
-          {/* 항목별 양 보정 */}
-          <div className="flex flex-col gap-2">
-            <p className="font-display text-lg text-ink">먹은 음식</p>
-            {items.length === 0 && (
-              <p className="text-sm text-muted">항목이 없어요. 음식을 추가해봐요.</p>
-            )}
-            {items.map((it, idx) => {
-              const s = scaled(it);
-              return (
-                <div
-                  key={idx}
-                  className="flex flex-col gap-2.5 rounded-2xl border border-line bg-rice px-4 py-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-ink">{it.name}</p>
-                    <button
-                      onClick={() => removeItem(idx)}
-                      className="text-sm text-muted"
-                      aria-label="삭제"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    {/* 스테퍼 */}
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => bump(idx, -1)}
-                        className="size-8 rounded-full bg-coral-soft text-lg leading-none text-ink/70 transition active:scale-90"
-                        aria-label="줄이기"
-                      >
-                        −
-                      </button>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        value={
-                          Number.isFinite(it.currentAmount)
-                            ? it.currentAmount
-                            : ""
-                        }
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) =>
-                          setAmount(
-                            idx,
-                            e.target.value === ""
-                              ? NaN
-                              : parseFloat(e.target.value),
-                          )
-                        }
-                        className="w-14 rounded-xl border border-line bg-cream px-1 py-1.5 text-center font-display text-ink outline-none focus:border-coral/50"
-                      />
-                      <button
-                        onClick={() => bump(idx, 1)}
-                        className="size-8 rounded-full bg-coral-soft text-lg leading-none text-ink/70 transition active:scale-90"
-                        aria-label="늘리기"
-                      >
-                        +
-                      </button>
-                      <span className="ml-0.5 text-sm text-muted">
-                        {it.unit}
-                      </span>
-                    </div>
-                    <span className="font-display text-coral">
-                      {Math.round(s.kcal)} kcal
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* 삭제 되돌리기 */}
-            {removedStack.length > 0 && (
-              <button
-                onClick={undoRemove}
-                className="self-start text-xs text-ink/50 underline underline-offset-2"
-              >
-                ‘{removedStack[removedStack.length - 1].item.name}’ 삭제됨 ·
-                되돌리기
-                {removedStack.length > 1 ? ` (${removedStack.length})` : ""}
-              </button>
-            )}
-
-            {/* 검색으로 음식 더 추가 */}
-            <button
-              onClick={openSearch}
-              disabled={mode === "saving"}
-              className="self-start rounded-2xl border border-dashed border-coral/40 px-4 py-2 text-sm text-coral transition active:scale-95 disabled:opacity-60"
-            >
-              🔍 음식 더 추가
-            </button>
-          </div>
-
-          {/* 합계 (항목에서 자동 계산) */}
-          <div className="rounded-2xl bg-matcha-soft px-4 py-3">
-            <p className="text-xs text-ink/50">합계</p>
-            <p className="font-display text-2xl text-ink">
-              {Math.round(total.kcal).toLocaleString()}
-              <span className="ml-1 text-base text-ink/45">kcal</span>
-            </p>
-            <p className="mt-0.5 text-xs text-ink/55">
-              단백질 {round1(total.protein_g)}g · 탄수 {round1(total.carb_g)}g ·
-              지방 {round1(total.fat_g)}g
-            </p>
-          </div>
-
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="메모 (선택)"
-            rows={2}
-            className="rounded-2xl border border-line bg-rice px-4 py-3 text-sm outline-none focus:border-coral/50"
-          />
-
-          <p className="text-xs text-muted">
-            {estimate.notes} · 신뢰도 {estimate.confidence}
-          </p>
-
-          <div className="flex gap-2">
-            <button
-              onClick={reset}
-              disabled={mode === "saving"}
-              className="flex-1 rounded-2xl bg-coral-soft py-3.5 font-medium text-ink/70 disabled:opacity-60"
-            >
-              취소
-            </button>
-            <button
-              onClick={save}
-              disabled={mode === "saving"}
-              className="flex-[2] rounded-2xl bg-coral py-3.5 font-display text-lg text-white shadow-sm transition active:scale-95 disabled:opacity-60"
-            >
-              {mode === "saving" ? "저장 중…" : "저장"}
-            </button>
-          </div>
-        </section>
+        <MealEditor
+          items={draft.items}
+          scaled={draft.scaled}
+          total={draft.total}
+          mealType={mealType}
+          onMealTypeChange={setMealType}
+          onAmountChange={draft.setAmount}
+          onBump={draft.bump}
+          onRemove={draft.removeItem}
+          removedLabel={
+            draft.removedStack.length > 0
+              ? `'${draft.removedStack[draft.removedStack.length - 1].item.name}' 삭제됨 · 되돌리기${
+                  draft.removedStack.length > 1 ? ` (${draft.removedStack.length})` : ""
+                }`
+              : undefined
+          }
+          onUndo={draft.undoRemove}
+          note={note}
+          onNoteChange={setNote}
+          photoUrl={previewUrl}
+          footerNote={`${estimate.notes} · 신뢰도 ${estimate.confidence}`}
+          onAddMore={openSearch}
+          onCancel={reset}
+          onSave={save}
+          saving={mode === "saving"}
+        />
       )}
 
       {toast && (

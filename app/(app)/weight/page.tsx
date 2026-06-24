@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 type WeightLog = {
   id: string;
@@ -76,6 +77,53 @@ export default function WeightPage() {
       setError(err instanceof Error ? err.message : "저장에 실패했어요.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editWeight, setEditWeight] = useState("");
+  const [editFat, setEditFat] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<WeightLog | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  function startEdit(l: WeightLog) {
+    setEditingId(l.id);
+    setEditWeight(String(Number(l.weightKg)));
+    setEditFat(l.bodyFatPct ? String(Number(l.bodyFatPct)) : "");
+  }
+
+  async function saveEdit() {
+    if (!editingId) return;
+    const w = parseFloat(editWeight);
+    if (!Number.isFinite(w) || w <= 0) return;
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/weight/${editingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weightKg: w, bodyFatPct: parseFloat(editFat) || undefined }),
+      });
+      if (res.ok) {
+        setEditingId(null);
+        load();
+      }
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/weight/${deleteTarget.id}`, { method: "DELETE" });
+      if (res.ok) {
+        setDeleteTarget(null);
+        load();
+      }
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -214,23 +262,91 @@ export default function WeightPage() {
             첫 체중을 기록해봐요!
           </p>
         )}
-        {logs.slice(0, 14).map((l) => (
-          <div
-            key={l.id}
-            className="flex items-center justify-between rounded-2xl border border-line bg-rice px-4 py-3"
-          >
-            <span className="text-sm text-ink/60">{fmtShort(l.loggedAt)}</span>
-            <span className="font-display text-ink">
-              {Number(l.weightKg)}kg
-              {l.bodyFatPct && (
-                <span className="ml-2 text-xs text-muted">
-                  체지방 {Number(l.bodyFatPct)}%
-                </span>
-              )}
-            </span>
-          </div>
-        ))}
+        {logs.slice(0, 14).map((l) =>
+          editingId === l.id ? (
+            <div
+              key={l.id}
+              className="flex items-center gap-2 rounded-2xl border border-coral/40 bg-rice px-4 py-3"
+            >
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                value={editWeight}
+                onChange={(e) => setEditWeight(e.target.value)}
+                className="w-16 rounded-xl border border-line bg-cream px-1 py-1.5 text-center font-display text-ink outline-none focus:border-coral/50"
+              />
+              <span className="text-xs text-muted">kg</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                value={editFat}
+                onChange={(e) => setEditFat(e.target.value)}
+                placeholder="체지방%"
+                className="w-16 rounded-xl border border-line bg-cream px-1 py-1.5 text-center font-display text-ink outline-none focus:border-coral/50"
+              />
+              <div className="ml-auto flex gap-1.5">
+                <button
+                  onClick={() => setEditingId(null)}
+                  disabled={savingEdit}
+                  className="rounded-xl bg-coral-soft px-3 py-1.5 text-xs text-ink/70 disabled:opacity-60"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={saveEdit}
+                  disabled={savingEdit}
+                  className="rounded-xl bg-coral px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                >
+                  {savingEdit ? "저장 중" : "저장"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              key={l.id}
+              className="flex items-center justify-between rounded-2xl border border-line bg-rice px-4 py-3"
+            >
+              <span className="text-sm text-ink/60">{fmtShort(l.loggedAt)}</span>
+              <span className="font-display text-ink">
+                {Number(l.weightKg)}kg
+                {l.bodyFatPct && (
+                  <span className="ml-2 text-xs text-muted">
+                    체지방 {Number(l.bodyFatPct)}%
+                  </span>
+                )}
+              </span>
+              <div className="flex shrink-0 gap-1">
+                <button
+                  onClick={() => startEdit(l)}
+                  className="px-1 text-sm text-ink/50"
+                  aria-label="수정"
+                >
+                  ✏️
+                </button>
+                <button
+                  onClick={() => setDeleteTarget(l)}
+                  className="px-1 text-sm text-ink/50"
+                  aria-label="삭제"
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+          ),
+        )}
       </div>
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="이 체중 기록을 삭제할까요?"
+          description="삭제하면 되돌릴 수 없어요."
+          busy={deleting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
     </main>
   );
 }

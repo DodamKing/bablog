@@ -9,19 +9,34 @@ import {
   Tooltip,
   XAxis,
 } from "recharts";
+import type { MealItem } from "@/lib/ai/types";
+import { MEAL_TYPES, type MealType } from "@/lib/meal";
+import { useDraftItems } from "@/lib/useDraftItems";
+import { useBackTrap } from "@/lib/useBackTrap";
+import MealEditor from "@/components/MealEditor";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 type MealRow = {
   id: string;
   eatenAt: string;
-  mealType: string | null;
+  mealType: MealType | null;
   photoUrl: string | null;
+  items: MealItem[];
   kcal: number;
   proteinG: string;
   carbG: string;
   fatG: string;
+  note: string | null;
 };
 
 type Period = "일" | "주" | "월";
+
+const MEAL_TYPE_EMOJI: Record<MealType, string> = {
+  아침: "🌅",
+  점심: "🍱",
+  저녁: "🍙",
+  간식: "🍪",
+};
 
 export default function HistoryPage() {
   const [meals, setMeals] = useState<MealRow[]>([]);
@@ -29,18 +44,20 @@ export default function HistoryPage() {
   const [period, setPeriod] = useState<Period>("일");
   const [dayOffset, setDayOffset] = useState(0); // 0=오늘, -1=어제 …
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/meals?days=31");
-        if (res.ok) {
-          const { meals } = (await res.json()) as { meals: MealRow[] };
-          setMeals(meals);
-        }
-      } finally {
-        setLoading(false);
+  async function load() {
+    try {
+      const res = await fetch("/api/meals?days=31");
+      if (res.ok) {
+        const { meals } = (await res.json()) as { meals: MealRow[] };
+        setMeals(meals);
       }
-    })();
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
   }, []);
 
   // ── 일별 합계(kcal) 집계: 최근 N일 ───────────────────────────
@@ -136,6 +153,7 @@ export default function HistoryPage() {
           onPrev={() => setDayOffset((o) => o - 1)}
           onNext={() => setDayOffset((o) => Math.min(0, o + 1))}
           canNext={dayOffset < 0}
+          onChanged={load}
         />
       ) : (
         <section className="flex flex-col gap-4">
@@ -192,6 +210,20 @@ export default function HistoryPage() {
   );
 }
 
+// 같은 날 같은 끼니(mealType)로 기록된 여러 건을 한 그룹으로 묶는다(여러 번에
+// 나눠 입력해도 "오늘 점심"은 합쳐서 보임). 미분류(null)는 맨 뒤 그룹으로.
+function groupByMealType(meals: MealRow[]) {
+  const buckets: { type: MealType | null; meals: MealRow[] }[] = [
+    ...MEAL_TYPES.map((type) => ({ type, meals: [] as MealRow[] })),
+    { type: null, meals: [] },
+  ];
+  for (const m of meals) {
+    const bucket = buckets.find((b) => b.type === (m.mealType ?? null));
+    bucket?.meals.push(m);
+  }
+  return buckets.filter((b) => b.meals.length > 0);
+}
+
 function DayView({
   date,
   meals,
@@ -199,6 +231,7 @@ function DayView({
   onPrev,
   onNext,
   canNext,
+  onChanged,
 }: {
   date: Date;
   meals: MealRow[];
@@ -206,7 +239,28 @@ function DayView({
   onPrev: () => void;
   onNext: () => void;
   canNext: boolean;
+  onChanged: () => void;
 }) {
+  const [editingMeal, setEditingMeal] = useState<MealRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MealRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/meals/${deleteTarget.id}`, { method: "DELETE" });
+      if (res.ok) {
+        setDeleteTarget(null);
+        onChanged();
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const groups = groupByMealType(meals);
+
   return (
     <section className="flex flex-col gap-4">
       {/* 날짜 이동 */}
@@ -236,40 +290,209 @@ function DayView({
         </p>
       </div>
 
-      {/* 끼니 리스트 */}
-      <div className="flex flex-col gap-2">
-        {meals.length === 0 ? (
+      {/* 끼니 그룹 */}
+      <div className="flex flex-col gap-5">
+        {groups.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted">이 날은 기록이 없어요.</p>
         ) : (
-          meals.map((m) => (
-            <div
-              key={m.id}
-              className="flex items-center gap-3 rounded-2xl border border-line bg-rice p-3"
-            >
-              {m.photoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={m.photoUrl} alt="" className="size-14 rounded-xl object-cover" />
-              ) : (
-                <div className="flex size-14 items-center justify-center rounded-xl bg-coral-soft text-2xl">
-                  🍚
+          groups.map((g) => {
+            const groupKcal = g.meals.reduce((s, m) => s + (m.kcal || 0), 0);
+            return (
+              <div key={g.type ?? "미분류"} className="flex flex-col gap-2">
+                <div className="flex items-center justify-between px-1">
+                  <p className="font-display text-ink">
+                    {g.type ? MEAL_TYPE_EMOJI[g.type] : "🍴"} {g.type ?? "기록"}
+                  </p>
+                  <p className="text-sm text-ink/55">{groupKcal.toLocaleString()} kcal</p>
                 </div>
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-ink">
-                  {m.mealType ?? "끼니"}
-                  <span className="ml-2 text-xs text-muted">{fmtTime(m.eatenAt)}</span>
-                </p>
-                <p className="text-xs text-ink/55">
-                  단백질 {round1(Number(m.proteinG))}g · 탄수 {round1(Number(m.carbG))}g · 지방{" "}
-                  {round1(Number(m.fatG))}g
-                </p>
+                <div className="flex flex-col gap-2">
+                  {g.meals.map((m) => (
+                    <MealCard
+                      key={m.id}
+                      meal={m}
+                      onEdit={() => setEditingMeal(m)}
+                      onDelete={() => setDeleteTarget(m)}
+                    />
+                  ))}
+                </div>
               </div>
-              <span className="font-display text-coral">{m.kcal} kcal</span>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
+
+      {editingMeal && (
+        <MealEditOverlay
+          key={editingMeal.id}
+          meal={editingMeal}
+          onClose={() => setEditingMeal(null)}
+          onSaved={() => {
+            setEditingMeal(null);
+            onChanged();
+          }}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="이 끼니를 삭제할까요?"
+          description="삭제하면 되돌릴 수 없어요."
+          busy={deleting}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDelete}
+        />
+      )}
     </section>
+  );
+}
+
+function MealCard({
+  meal,
+  onEdit,
+  onDelete,
+}: {
+  meal: MealRow;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [showPhoto, setShowPhoto] = useState(false);
+
+  return (
+    <div className="flex flex-col gap-2 rounded-2xl border border-line bg-rice p-3">
+      <div className="flex items-center gap-3">
+        {meal.photoUrl ? (
+          <button onClick={() => setShowPhoto(true)} className="shrink-0" aria-label="사진 크게 보기">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={meal.photoUrl} alt="" className="size-14 rounded-xl object-cover" />
+          </button>
+        ) : (
+          <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-coral-soft text-2xl">
+            🍚
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-xs text-muted">{fmtTime(meal.eatenAt)}</p>
+          {meal.note && <p className="truncate text-xs text-ink/55">{meal.note}</p>}
+        </div>
+        <span className="shrink-0 font-display text-coral">{meal.kcal} kcal</span>
+        <div className="flex shrink-0 gap-1">
+          <button onClick={onEdit} className="px-1 text-sm text-ink/50" aria-label="수정">
+            ✏️
+          </button>
+          <button onClick={onDelete} className="px-1 text-sm text-ink/50" aria-label="삭제">
+            🗑️
+          </button>
+        </div>
+      </div>
+
+      {/* 음식별 영양정보 — 한 끼니를 여러 항목으로 기록했어도 전부 나열 */}
+      {meal.items.length > 0 && (
+        <div className="flex flex-col gap-1.5 border-t border-line pt-2">
+          {meal.items.map((it, idx) => (
+            <div key={idx} className="flex flex-col gap-0.5 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="min-w-0 truncate font-medium text-ink/80">{it.name}</span>
+                <span className="shrink-0 text-ink/60">{Math.round(it.kcal)}kcal</span>
+              </div>
+              <p className="text-ink/40">
+                {it.amount}{it.unit} · 단백질 {round1(it.protein_g)}g · 탄수 {round1(it.carb_g)}g · 지방{" "}
+                {round1(it.fat_g)}g
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 원본 비율로 보기(썸네일은 정사각 크롭이라 잘려 보이는 문제 보완) */}
+      {showPhoto && meal.photoUrl && (
+        <button
+          onClick={() => setShowPhoto(false)}
+          className="fixed inset-0 z-40 flex items-center justify-center bg-ink/80 p-6"
+          aria-label="닫기"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={meal.photoUrl}
+            alt=""
+            className="max-h-full max-w-full rounded-2xl object-contain"
+          />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MealEditOverlay({
+  meal,
+  onClose,
+  onSaved,
+}: {
+  meal: MealRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const draft = useDraftItems(meal.items);
+  const [mealType, setMealType] = useState<MealType>(meal.mealType ?? "간식");
+  const [note, setNote] = useState(meal.note ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useBackTrap(true, onClose);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/meals/${meal.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...draft.toPayload(), mealType, note }),
+      });
+      if (!res.ok) throw new Error("수정에 실패했어요.");
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "수정에 실패했어요.");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto bg-cream p-4">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-4">
+        <header className="flex items-center justify-between pt-2">
+          <h2 className="font-display text-xl text-ink">끼니 수정</h2>
+          <button onClick={onClose} className="text-sm text-muted">
+            닫기
+          </button>
+        </header>
+        {error && <p className="text-sm text-coral">{error}</p>}
+        <MealEditor
+          items={draft.items}
+          scaled={draft.scaled}
+          total={draft.total}
+          mealType={mealType}
+          onMealTypeChange={setMealType}
+          onAmountChange={draft.setAmount}
+          onBump={draft.bump}
+          onRemove={draft.removeItem}
+          removedLabel={
+            draft.removedStack.length > 0
+              ? `'${draft.removedStack[draft.removedStack.length - 1].item.name}' 삭제됨 · 되돌리기${
+                  draft.removedStack.length > 1 ? ` (${draft.removedStack.length})` : ""
+                }`
+              : undefined
+          }
+          onUndo={draft.undoRemove}
+          note={note}
+          onNoteChange={setNote}
+          photoUrl={meal.photoUrl}
+          onCancel={onClose}
+          onSave={save}
+          saving={saving}
+          saveLabel="수정 저장"
+        />
+      </div>
+    </div>
   );
 }
 
