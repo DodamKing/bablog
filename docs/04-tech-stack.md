@@ -23,7 +23,7 @@ DATABASE_URL=postgres://...neon...        # Neon 연결 문자열
 GEMINI_API_KEY=...                         # Google AI Studio 키
 APP_PASSCODE=...                           # 단일 사용자 잠금 (02 인증)
 CRON_SECRET=...                            # Vercel Cron 보호 (Phase 4)
-VAPID_PUBLIC_KEY=...                       # 푸시 (Phase 4)
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=...           # 푸시 (Phase 4) — 클라이언트 subscribe에서도 읽어야 해서 NEXT_PUBLIC_ 접두
 VAPID_PRIVATE_KEY=...                       # 푸시 (Phase 4)
 VAPID_SUBJECT=mailto:you@example.com        # 푸시 (Phase 4)
 # (사진 보관 시) BLOB_READ_WRITE_TOKEN=...   # Vercel Blob
@@ -33,7 +33,7 @@ VAPID_SUBJECT=mailto:you@example.com        # 푸시 (Phase 4)
 - `@google/generative-ai` — Gemini SDK. (Phase 1, 미설치)
 - [x] `drizzle-orm`, `drizzle-kit`, `@neondatabase/serverless`, `dotenv` (Phase 0에서 설치 완료). `db:generate`/`db:migrate`/`db:push`/`db:studio` npm 스크립트 등록됨.
 - `recharts` (Phase 2, 미설치).
-- `web-push` (Phase 4, 미설치).
+- [x] `web-push`, `@types/web-push` (Phase 4 설치 완료).
 - `next-pwa` 쓸지 수동 SW 쓸지는 `07`에서 결정.
 
 ## 코드 컨벤션

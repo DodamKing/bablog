@@ -1,5 +1,5 @@
 // 밥로그 서비스 워커 (Phase 1.5) — 앱 셸 캐싱 + 기본 오프라인.
-// 푸시(push/notificationclick) 핸들러는 Phase 4에서 추가.
+// Phase 4: 푸시 수신(push)·클릭(notificationclick) 핸들러 추가.
 const CACHE = "bablog-v1";
 const PRECACHE = [
   "/icons/icon-192.png",
@@ -69,4 +69,20 @@ self.addEventListener("fetch", (e) => {
         ),
     );
   }
+});
+
+self.addEventListener("push", (e) => {
+  const data = e.data?.json() ?? {};
+  e.waitUntil(
+    self.registration.showNotification(data.title ?? "밥로그", {
+      body: data.body,
+      icon: "/icons/icon-192.png",
+      data: { url: data.url ?? "/" },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.openWindow(e.notification.data.url));
 });

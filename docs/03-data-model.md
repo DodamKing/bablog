@@ -42,11 +42,13 @@
 | `generated_at` | timestamptz default now | |
 unique(`user_id`, `period_label`).
 
-### `push_subscriptions` — 푸시 구독 (Phase 4)
+### `push_subscriptions` — 푸시 구독 (Phase 4, 구현됨)
+초안엔 `user_id`가 없었으나(D16 멀티유저 전환 전 작성) 발송 시 사용자별로 스코프해야 해서 추가.
 | 컬럼 | 타입 | 설명 |
 |---|---|---|
 | `id` | uuid (pk) | |
-| `endpoint` | text unique | PushSubscription endpoint |
+| `user_id` | text (fk users) | |
+| `endpoint` | text unique | PushSubscription endpoint(기기/브라우저 단위) |
 | `p256dh` | text | 구독 키 |
 | `auth` | text | 구독 키 |
 | `created_at` | timestamptz default now | |
@@ -139,6 +141,7 @@ BMR/TDEE 계산용. 체중은 `weight_logs` 최신값을 그대로 쓰고 중복
 ## 인덱스
 - `meals(eaten_at)` — 기간 조회용.
 - `weight_logs(logged_at)`.
+- `push_subscriptions(user_id)`.
 
 ## 마이그레이션
 - drizzle-kit 사용. `drizzle.config.ts`에 Neon 연결.

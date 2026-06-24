@@ -132,8 +132,8 @@ export default function ReportPage() {
               <StatCard label="기록한 날" value={String(stats.recordedDays)} unit="일" />
               <StatCard
                 label="매크로 평균(1일)"
-                value={`탄 ${stats.avgCarb} · 단 ${stats.avgProtein} · 지 ${stats.avgFat}`}
-                unit="g"
+                value={`탄 ${stats.avgCarb}g · 단 ${stats.avgProtein}g · 지 ${stats.avgFat}g`}
+                className="col-span-2"
               />
               {stats.weightDelta !== null && (
                 <StatCard
@@ -176,9 +176,19 @@ export default function ReportPage() {
   );
 }
 
-function StatCard({ label, value, unit }: { label: string; value: string; unit?: string }) {
+function StatCard({
+  label,
+  value,
+  unit,
+  className,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  className?: string;
+}) {
   return (
-    <div className="rounded-2xl border border-line bg-rice px-4 py-3">
+    <div className={`rounded-2xl border border-line bg-rice px-4 py-3 ${className ?? ""}`}>
       <p className="text-xs text-ink/55">{label}</p>
       <p className="font-display text-lg text-ink">
         {value}

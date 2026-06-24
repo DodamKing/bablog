@@ -143,3 +143,22 @@ export const reports = pgTable(
     uniqueIndex("reports_user_period_idx").on(table.userId, table.periodLabel),
   ],
 );
+
+// Phase 4: 푸시 구독. endpoint가 기기/브라우저 단위 식별자라 unique.
+// 03 문서 초안엔 user_id가 없었으나(D16 멀티유저 전환 전 작성) 발송 시 사용자별 스코프가 필요해 추가.
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull().unique(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("push_subscriptions_user_idx").on(table.userId)],
+);
