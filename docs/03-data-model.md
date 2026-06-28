@@ -62,28 +62,32 @@ unique(`user_id`, `period_label`).
 | `protein_g` / `carb_g` / `fat_g` | numeric |
 | `meal_count` | integer |
 
-### `foods` — (제안, 백로그) 전역 공유 음식 DB (캐시 아니라 영구 DB로 확정, 2026-06-24)
-음식 영양정보는 개인정보가 아니라 객관적 사실이므로, 멀티유저(D16)의 "각자 독립 데이터" 원칙과 무관하게 **전역으로 공유**한다 — 한 사용자가 추정/등록한 음식을 다른 사용자도 즉시 재사용. 목적은 같은 음식을 매번 AI에게 다시 추정시키는 비효율 제거(`06` 조회 우선순위 참고). 식약처 API 결과는 매번 라이브 호출(D18)이라 여기 안 들어가고, **AI 폴백 추정**과 **사용자 직접 등록/수정값**만 영구 저장.
+### `foods` — (Phase 6, 확정) 전역 공유 음식 DB
+음식 영양정보는 개인정보가 아니라 객관적 사실이므로, 멀티유저(D16)의 "각자 독립 데이터" 원칙과 무관하게 **전역으로 공유**한다 — 한 사용자가 추정/등록/검색한 음식을 다른 사용자도 즉시 재사용.
+**범위(D19 보강, 2026-06-28):** 처음엔 "AI 추정 결과만 저장"으로 좁게 설계했으나, 그러면 식약처 DB에 잘 매칭되는 흔한 한식(김치찌개·비빔밥 등 — 사실상 가장 자주 반복되는 음식)이 즐겨찾기/자주먹는 목록에 영영 안 뜨는 문제가 있어 확장: **수동 검색으로 끼니에 추가한 음식은 출처(식약처/AI/직접등록) 상관없이 저장 시점에 모두 upsert.** "AI 재호출 회피"는 그중 AI 추정 항목에서만 의미 있는 효과일 뿐, 저장 자체는 출처를 안 가림. 사진 분석(비전 인식) 항목은 범위 밖(Phase 7+ "하이브리드 매칭" 참고).
+**저장(캐싱) 시점(D19):** 별도 캐싱 동작이 아니라 저장 흐름에 포함됨 — 추정/검색 직후가 아니라 **끼니를 실제로 저장하는 시점**(보정 화면에서 사용자가 고친 최종값)에 upsert(이름 매칭, 기존 있으면 `usage_count`만 +1). 즐겨찾기 토글 시점에도 아직 없으면 upsert(식약처 결과를 한 번도 끼니로 저장 안 하고 바로 즐겨찾기만 누르는 경우 대응).
 | 컬럼 | 타입 | 설명 |
 |---|---|---|
 | `id` | uuid (pk) | |
-| `name` | text | 검색 키(정규화된 음식명) |
-| `source` | text | `ai`(AI 추정 후 저장) \| `user`(직접 등록/수정) |
-| `kcal` / `protein_g` / `carb_g` / `fat_g` | numeric | 기준량(1인분 또는 100g) 당 영양정보 |
-| `sodium_mg` / `sugar_g` / `fiber_g` | numeric nullable | 확장 영양정보(있으면) |
-| `serving_desc` | text nullable | "1공기(210g)" 등 기준량 설명 |
-| `usage_count` | integer default 0 | 기록될 때마다 +1 — 자주 쓰는 음식 정렬/즐겨찾기 기본값에 사용 |
-| `created_by` | text nullable (fk users) | 직접 등록한 사용자(AI 추정 결과는 null) |
+| `name` | text unique | 검색 키(정규화된 음식명, 정확히 일치하는 이름끼리만 upsert — 별칭/유사어 매칭은 범위 밖) |
+| `source` | text | `gov`(식약처 검색으로 추가) \| `ai`(AI 추정으로 추가) \| `user`(직접 등록) |
+| `basis_amount` | numeric | 영양값 기준 양(기존 `FoodHit.basisAmount`와 동일 패턴) |
+| `unit` | text | `g` \| `ml` 등 — 기준량 단위 |
+| `kcal` / `protein_g` / `carb_g` / `fat_g` | numeric | `basis_amount`+`unit` 기준 영양정보 |
+| `sodium_mg` / `sugar_g` / `fiber_g` | numeric nullable | 확장 영양정보(있으면, 현재 입력 경로 없음 — Phase 7+) |
+| `created_by` | text nullable (fk users) | 처음 upsert한 사용자. 조회/재사용엔 권한 제어 아님(전역 공유라 누구나 재사용)이지만, **삭제는 예외** — `source: user`(직접 등록)인 행만 `created_by` 일치 시 본인이 지울 수 있음(2026-06-28 추가, 등록 실수 교정용). `gov`/`ai` 출처는 삭제 UI 없음. 수정 기능은 없음 — 지우고 다시 등록하는 방식으로 대체(이미 저장된 끼니는 스냅샷이라 영향 없음) |
 | `created_at` | timestamptz default now | |
 
-### `user_favorite_foods` — (제안, 백로그) 사용자별 즐겨찾기
-`foods`는 전역이지만 즐겨찾기는 사용자별 — `users`↔`foods` 다대다.
-| 컬럼 | 타입 |
-|---|---|
-| `user_id` | text (fk users) |
-| `food_id` | uuid (fk foods) |
-| `created_at` | timestamptz default now |
-(PK는 `user_id`+`food_id` 복합)
+### `user_foods` — (Phase 6, 확정) 사용자별 사용횟수 + 즐겨찾기
+**`user_favorite_foods`에서 확장(2026-06-28).** 처음엔 즐겨찾기 토글만 담는 테이블로 설계했는데, "사용횟수"를 `foods`에 전역 컬럼으로 두면 멀티유저(D16) 환경에서 다른 사용자의 사용량이 내 "자주 먹는 음식" 목록에 섞여 들어가는 문제가 있어 — `foods`(전역 영양정보)와 분리해 **사용횟수도 사용자별로** `user_foods`에 둠. `foods`는 객관적 사실(영양정보)만 전역 공유, "얼마나 자주/즐겨 먹는지"는 사용자마다 다른 개인 데이터.
+| 컬럼 | 타입 | 설명 |
+|---|---|---|
+| `user_id` | text (fk users) | |
+| `food_id` | uuid (fk foods) | |
+| `usage_count` | integer default 0 | 이 사용자가 끼니에 추가할 때마다 +1 |
+| `is_favorite` | boolean default false | 즐겨찾기 토글 |
+| `created_at` | timestamptz default now | |
+(PK는 `user_id`+`food_id` 복합). "자주 먹는 음식" 목록 = `user_foods` 기준 `is_favorite desc, usage_count desc`.
 
 ### `user_profiles` — (제안, 백로그) 목표 칼로리 계산용 신체 정보
 BMR/TDEE 계산용. 체중은 `weight_logs` 최신값을 그대로 쓰고 중복 저장 안 함.

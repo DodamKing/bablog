@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
 import type { MealEstimate, MealItem } from "@/lib/ai/types";
-import type { FoodHit } from "@/lib/food/types";
+import { hitToBasis, type FoodHit } from "@/lib/food/types";
 import { compressImage } from "@/lib/image";
 import { inferMealType, type MealType } from "@/lib/meal";
 import { useDraftItems } from "@/lib/useDraftItems";
 import { useBackTrap } from "@/lib/useBackTrap";
 import MealEditor from "@/components/MealEditor";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 type Mode = "home" | "analyzing" | "search" | "review" | "saving";
 
@@ -34,6 +35,21 @@ export default function RecordPage() {
   const [results, setResults] = useState<FoodHit[]>([]);
   const [searched, setSearched] = useState(false);
   const [searchBusy, setSearchBusy] = useState(false);
+
+  // 즐겨찾기 + 자주 먹는 음식 (Phase 6)
+  const [frequent, setFrequent] = useState<FoodHit[]>([]);
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [regForm, setRegForm] = useState({
+    name: "",
+    amount: "",
+    unit: "g",
+    kcal: "",
+    protein_g: "",
+    carb_g: "",
+    fat_g: "",
+  });
+  const [deleteTarget, setDeleteTarget] = useState<FoodHit | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const [todayMeals, setTodayMeals] = useState<MealRow[]>([]);
 
@@ -102,14 +118,26 @@ export default function RecordPage() {
     setQuery("");
     setResults([]);
     setSearched(false);
+    setShowRegisterForm(false);
     setMode("home");
   }
 
   // ── 수동 입력(D18): 검색 → 선택/AI추정 → 보정 화면 재사용 ──────────
 
+  async function loadFrequent() {
+    try {
+      const res = await fetch("/api/foods/search");
+      const json = await res.json();
+      if (res.ok) setFrequent((json.foods as FoodHit[]) ?? []);
+    } catch {
+      /* 보조 정보 — 실패해도 무시 */
+    }
+  }
+
   function startManual() {
     reset();
     setMode("search");
+    loadFrequent();
   }
 
   function openSearch() {
@@ -117,7 +145,9 @@ export default function RecordPage() {
     setQuery("");
     setResults([]);
     setSearched(false);
+    setShowRegisterForm(false);
     setMode("search");
+    loadFrequent();
   }
 
   async function doSearch() {
@@ -139,19 +169,91 @@ export default function RecordPage() {
   }
 
   // FoodHit(기준 양 기준 매크로) → 보정용 항목(1회 제공량을 기본 양으로).
+  // source: "gov" — 식약처/foods 테이블 출신, 끼니 저장 시 foods/user_foods에 upsert(D19).
   function hitToItem(h: FoodHit): MealItem {
-    const amount =
-      h.servingWeight && h.servingWeight > 0 ? h.servingWeight : h.basisAmount;
-    const f = h.basisAmount ? amount / h.basisAmount : 1;
-    return {
-      name: h.name,
-      amount: round1(amount),
-      unit: h.unit,
-      kcal: h.kcal * f,
-      protein_g: h.protein_g * f,
-      carb_g: h.carb_g * f,
-      fat_g: h.fat_g * f,
-    };
+    return { ...hitToBasis(h), source: "gov" };
+  }
+
+  // 즐겨찾기 토글 (Phase 6). foods 테이블에 아직 없는 식약처 라이브 결과는 서버가 upsert 후 처리.
+  async function toggleFavorite(hit: FoodHit) {
+    const makeFavorite = !hit.favorited;
+    const apply = (fav: boolean) => (list: FoodHit[]) =>
+      list.map((h) => (h.code === hit.code ? { ...h, favorited: fav } : h));
+    setResults(apply(makeFavorite));
+    setFrequent(apply(makeFavorite));
+    try {
+      const res = await fetch("/api/foods/favorite", {
+        method: makeFavorite ? "POST" : "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          hit.fromFoodsTable ? { foodId: hit.code } : { hit },
+        ),
+      });
+      if (!res.ok) throw new Error();
+    } catch {
+      setResults(apply(!makeFavorite));
+      setFrequent(apply(!makeFavorite));
+    }
+  }
+
+  // 직접 등록 (Phase 6) — 검색 결과 없을 때 AI 추정 버튼 옆에서 시작.
+  // kcal/단백/탄수/지방은 전역 공유 데이터라 빈 값을 0으로 묵인하지 않고 전부 필수로 받음.
+  function parseRequired(s: string): number | null {
+    if (s.trim() === "") return null;
+    const n = parseFloat(s);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+
+  async function submitRegister() {
+    const name = regForm.name.trim();
+    const amount = parseFloat(regForm.amount);
+    const unit = regForm.unit.trim();
+    const kcal = parseRequired(regForm.kcal);
+    const protein_g = parseRequired(regForm.protein_g);
+    const carb_g = parseRequired(regForm.carb_g);
+    const fat_g = parseRequired(regForm.fat_g);
+    if (
+      !name || !unit || !Number.isFinite(amount) || amount <= 0 ||
+      kcal === null || protein_g === null || carb_g === null || fat_g === null
+    ) {
+      setError("이름·양·단위·kcal·단백질·탄수·지방을 모두 채워주세요.");
+      return;
+    }
+    setSearchBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/foods", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          amount,
+          unit,
+          kcal,
+          protein_g,
+          carb_g,
+          fat_g,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "등록 실패");
+      const food = json.food as FoodHit;
+      addItems([{ ...hitToBasis(food), source: "user" }], "직접 등록");
+      setShowRegisterForm(false);
+      setRegForm({
+        name: "",
+        amount: "",
+        unit: "g",
+        kcal: "",
+        protein_g: "",
+        carb_g: "",
+        fat_g: "",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "등록에 실패했어요.");
+    } finally {
+      setSearchBusy(false);
+    }
   }
 
   // 항목들을 보정 화면에 추가(기존 items에 누적). 사진 없는 수동 흐름이라
@@ -189,11 +291,81 @@ export default function RecordPage() {
         setError("‘" + q + "’를 추정하지 못했어요. 다른 이름으로 검색해볼까요?");
         return;
       }
-      addItems(est.items, "AI 이름 기반 추정값");
+      addItems(
+        est.items.map((it) => ({ ...it, source: "ai" as const })),
+        "AI 이름 기반 추정값",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "추정에 실패했어요.");
     } finally {
       setSearchBusy(false);
+    }
+  }
+
+  // 검색결과/자주먹는 음식 한 줄 — 양쪽에서 재사용.
+  function renderFoodRow(h: FoodHit) {
+    return (
+      <div
+        key={h.code}
+        className="flex items-center gap-1 rounded-2xl border border-line bg-rice px-4 py-3"
+      >
+        <button
+          onClick={() => addItems([hitToItem(h)], h.maker ? "식약처 DB" : "")}
+          className="flex min-w-0 flex-1 items-center justify-between text-left transition active:scale-[0.99]"
+        >
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-medium text-ink">
+              {h.name}
+            </span>
+            <span className="text-xs text-muted">
+              {h.basisAmount}
+              {h.unit}당 {Math.round(h.kcal)} kcal
+              {h.maker ? ` · ${h.maker}` : ""}
+            </span>
+          </span>
+          <span className="ml-2 shrink-0 font-display text-coral">＋</span>
+        </button>
+        <button
+          onClick={() => toggleFavorite(h)}
+          aria-label={h.favorited ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+          className="shrink-0 px-1 text-lg text-coral transition active:scale-90"
+        >
+          {h.favorited ? "★" : "☆"}
+        </button>
+        {h.mine && (
+          <button
+            onClick={() => setDeleteTarget(h)}
+            aria-label="삭제"
+            className="shrink-0 px-1 text-sm text-muted transition active:scale-90"
+          >
+            🗑
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // 내가 직접 등록한 음식 삭제 (Phase 6). 끼니에 이미 저장된 기록은
+  // 그 시점 스냅샷이라 영향 없음 — `foods`/`user_foods`에서만 제거.
+  async function confirmDeleteFood() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
+    try {
+      const res = await fetch("/api/foods", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ foodId: deleteTarget.code }),
+      });
+      if (!res.ok) throw new Error();
+      const removed = (list: FoodHit[]) =>
+        list.filter((h) => h.code !== deleteTarget.code);
+      setResults(removed);
+      setFrequent(removed);
+      setDeleteTarget(null);
+    } catch {
+      setError("삭제에 실패했어요.");
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -382,40 +554,123 @@ export default function RecordPage() {
             </p>
           )}
 
-          <div className="flex flex-col gap-2">
-            {results.map((h) => (
-              <button
-                key={h.code}
-                onClick={() => addItems([hitToItem(h)], "식약처 DB")}
-                className="flex items-center justify-between rounded-2xl border border-line bg-rice px-4 py-3 text-left transition active:scale-[0.99]"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-ink">
-                    {h.name}
-                  </span>
-                  <span className="text-xs text-muted">
-                    {h.basisAmount}
-                    {h.unit}당 {Math.round(h.kcal)} kcal
-                    {h.maker ? ` · ${h.maker}` : ""}
-                  </span>
-                </span>
-                <span className="ml-2 shrink-0 font-display text-coral">＋</span>
-              </button>
-            ))}
-          </div>
+          {/* 검색 전: 즐겨찾기 + 자주 먹는 음식 (Phase 6) */}
+          {query.trim() === "" && !searched && frequent.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-xs text-muted">즐겨찾기 · 자주 먹는 음식</p>
+              {frequent.map(renderFoodRow)}
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2">{results.map(renderFoodRow)}</div>
 
           {searched && !searchBusy && results.length === 0 && (
             <p className="text-sm text-muted">검색 결과가 없어요.</p>
           )}
 
-          {/* AI 폴백: DB에 없으면 이름으로 추정 */}
+          {/* AI 폴백 + 직접 등록 토글: DB에 없으면. 폼 자체(showRegisterForm)는 검색어가
+              바뀌어도 안 사라지게 별도 블록으로 분리 — 이전엔 같은 조건에 묶여 있어서
+              검색창을 비우면 작성 중인 폼이 통째로 사라지는 버그가 있었음. */}
           {searched && !searchBusy && query.trim() && (
-            <button
-              onClick={aiEstimate}
-              className="self-start rounded-2xl bg-matcha-soft px-4 py-2.5 text-sm font-medium text-ink/70 transition active:scale-95"
-            >
-              ✨ ‘{query.trim()}’ AI로 추정해서 추가
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={aiEstimate}
+                className="flex-1 rounded-2xl bg-matcha-soft px-4 py-2.5 text-sm font-medium text-ink/70 transition active:scale-95"
+              >
+                ✨ AI로 추정해서 추가
+              </button>
+              <button
+                onClick={() => {
+                  setShowRegisterForm((v) => !v);
+                  setRegForm((f) => ({ ...f, name: query.trim() }));
+                }}
+                className="flex-1 rounded-2xl border border-dashed border-coral/40 px-4 py-2.5 text-sm font-medium text-coral transition active:scale-95"
+              >
+                📝 직접 등록
+              </button>
+            </div>
+          )}
+
+          {showRegisterForm && (
+                <div className="flex flex-col gap-2 rounded-2xl border border-line bg-rice p-3">
+                  <input
+                    value={regForm.name}
+                    onChange={(e) =>
+                      setRegForm((f) => ({ ...f, name: e.target.value }))
+                    }
+                    placeholder="음식 이름"
+                    className="rounded-xl border border-line bg-cream px-3 py-2 text-sm outline-none focus:border-coral/50"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      value={regForm.amount}
+                      onChange={(e) =>
+                        setRegForm((f) => ({ ...f, amount: e.target.value }))
+                      }
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="양"
+                      className="w-16 rounded-xl border border-line bg-cream px-2 py-2 text-center text-sm outline-none focus:border-coral/50"
+                    />
+                    <input
+                      value={regForm.unit}
+                      onChange={(e) =>
+                        setRegForm((f) => ({ ...f, unit: e.target.value }))
+                      }
+                      placeholder="단위(g)"
+                      className="w-16 rounded-xl border border-line bg-cream px-2 py-2 text-center text-sm outline-none focus:border-coral/50"
+                    />
+                    <input
+                      value={regForm.kcal}
+                      onChange={(e) =>
+                        setRegForm((f) => ({ ...f, kcal: e.target.value }))
+                      }
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="kcal"
+                      className="flex-1 rounded-xl border border-line bg-cream px-2 py-2 text-center text-sm outline-none focus:border-coral/50"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      value={regForm.protein_g}
+                      onChange={(e) =>
+                        setRegForm((f) => ({ ...f, protein_g: e.target.value }))
+                      }
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="단백질 g"
+                      className="flex-1 rounded-xl border border-line bg-cream px-2 py-2 text-center text-sm outline-none focus:border-coral/50"
+                    />
+                    <input
+                      value={regForm.carb_g}
+                      onChange={(e) =>
+                        setRegForm((f) => ({ ...f, carb_g: e.target.value }))
+                      }
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="탄수 g"
+                      className="flex-1 rounded-xl border border-line bg-cream px-2 py-2 text-center text-sm outline-none focus:border-coral/50"
+                    />
+                    <input
+                      value={regForm.fat_g}
+                      onChange={(e) =>
+                        setRegForm((f) => ({ ...f, fat_g: e.target.value }))
+                      }
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="지방 g"
+                      className="flex-1 rounded-xl border border-line bg-cream px-2 py-2 text-center text-sm outline-none focus:border-coral/50"
+                    />
+                  </div>
+                  <button
+                    onClick={submitRegister}
+                    disabled={searchBusy}
+                    className="rounded-2xl bg-coral py-2.5 font-display text-white transition active:scale-95 disabled:opacity-50"
+                  >
+                    등록하고 추가
+                  </button>
+                </div>
           )}
 
           <button
@@ -462,10 +717,16 @@ export default function RecordPage() {
           {toast}
         </div>
       )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title={`'${deleteTarget.name}' 삭제할까요?`}
+          description="직접 등록한 음식만 지울 수 있어요. 이미 저장된 끼니 기록엔 영향 없어요."
+          busy={deleteBusy}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDeleteFood}
+        />
+      )}
     </main>
   );
-}
-
-function round1(n: number): number {
-  return Math.round(n * 10) / 10;
 }

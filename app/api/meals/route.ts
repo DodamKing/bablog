@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { meals } from "@/lib/db/schema";
 import { getUserId } from "@/lib/auth-helpers";
 import { uploadMealPhoto } from "@/lib/storage/r2";
+import { recordFoodUsage } from "@/lib/food/foodsDb";
 
 export const maxDuration = 30;
 
@@ -74,6 +75,35 @@ export async function POST(req: NextRequest) {
       aiRaw: data.aiRaw ?? null,
     })
     .returning();
+
+  // Phase 6(D19): 수동 검색으로 추가된 항목(식약처/AI/직접등록)은 출처 안 가리고
+  // foods/user_foods에 upsert — 다음 검색 시 즐겨찾기/자주먹는 목록에 반영, AI 재호출도 줄어듦.
+  // 실패해도 끼니 저장 자체는 막지 않음(부수 효과라 best-effort).
+  const items: Array<Record<string, unknown>> = Array.isArray(data.items)
+    ? data.items
+    : [];
+  for (const item of items) {
+    if (item.source !== "gov" && item.source !== "ai" && item.source !== "user") {
+      continue;
+    }
+    try {
+      await recordFoodUsage(
+        userId,
+        {
+          name: String(item.name ?? ""),
+          amount: Number(item.amount) || 0,
+          unit: String(item.unit ?? "g"),
+          kcal: Number(item.kcal) || 0,
+          protein_g: Number(item.protein_g) || 0,
+          carb_g: Number(item.carb_g) || 0,
+          fat_g: Number(item.fat_g) || 0,
+        },
+        item.source as "gov" | "ai" | "user",
+      );
+    } catch (err) {
+      console.error("foods usage upsert failed:", err);
+    }
+  }
 
   return NextResponse.json({ meal: row });
 }

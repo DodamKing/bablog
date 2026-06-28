@@ -9,6 +9,9 @@ export type MealItem = {
   protein_g: number;
   carb_g: number;
   fat_g: number;
+  // Phase 6: 수동 검색으로 추가된 항목의 출처(D19) — 끼니 저장 시 `foods`/`user_foods`
+  // upsert 대상 판별용. 사진 분석(비전) 항목은 없음(undefined) → upsert 안 함.
+  source?: "gov" | "ai" | "user";
 };
 
 export type MealTotals = {

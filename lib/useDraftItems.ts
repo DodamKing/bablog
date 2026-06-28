@@ -106,6 +106,7 @@ export function useDraftItems(initial: MealItem[] = []) {
         protein_g: round1(s.protein_g),
         carb_g: round1(s.carb_g),
         fat_g: round1(s.fat_g),
+        ...(it.source ? { source: it.source } : {}),
       };
     });
     return {

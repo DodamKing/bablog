@@ -6,6 +6,7 @@ import {
   jsonb,
   integer,
   numeric,
+  boolean,
   primaryKey,
   index,
   uniqueIndex,
@@ -142,6 +143,47 @@ export const reports = pgTable(
   (table) => [
     uniqueIndex("reports_user_period_idx").on(table.userId, table.periodLabel),
   ],
+);
+
+// Phase 6: 전역 공유 음식 DB. 영양정보는 객관적 사실이라 전역(D16 멀티유저 격리와 무관, `03` 참고).
+// 수동 검색으로 끼니에 추가된 음식은 출처(식약처/AI/직접등록) 안 가리고 끼니 저장 시점에 upsert(D19).
+export const foods = pgTable("foods", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  source: text("source").$type<"gov" | "ai" | "user">().notNull(),
+  basisAmount: numeric("basis_amount").notNull(),
+  unit: text("unit").notNull(),
+  kcal: numeric("kcal").notNull(),
+  proteinG: numeric("protein_g").notNull(),
+  carbG: numeric("carb_g").notNull(),
+  fatG: numeric("fat_g").notNull(),
+  sodiumMg: numeric("sodium_mg"),
+  sugarG: numeric("sugar_g"),
+  fiberG: numeric("fiber_g"),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+// 사용자별 사용횟수 + 즐겨찾기. `foods.usage_count`를 전역으로 뒀다가 멀티유저에서
+// 다른 사용자 사용량이 섞이는 문제를 발견해 사용자별 테이블로 분리(D19, 2026-06-28).
+export const userFoods = pgTable(
+  "user_foods",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    foodId: uuid("food_id")
+      .notNull()
+      .references(() => foods.id, { onDelete: "cascade" }),
+    usageCount: integer("usage_count").notNull().default(0),
+    isFavorite: boolean("is_favorite").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.foodId] })],
 );
 
 // Phase 4: 푸시 구독. endpoint가 기기/브라우저 단위 식별자라 unique.

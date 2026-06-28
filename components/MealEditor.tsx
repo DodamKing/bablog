@@ -184,7 +184,7 @@ export default function MealEditor({
         <button
           onClick={onSave}
           disabled={saving}
-          className="flex-[2] rounded-2xl bg-coral py-3.5 font-display text-lg text-white shadow-sm transition active:scale-95 disabled:opacity-60"
+          className="flex-2 rounded-2xl bg-coral py-3.5 font-display text-lg text-white shadow-sm transition active:scale-95 disabled:opacity-60"
         >
           {saving ? "저장 중…" : saveLabel}
         </button>
