@@ -15,6 +15,7 @@ import { useDraftItems } from "@/lib/useDraftItems";
 import { useBackTrap } from "@/lib/useBackTrap";
 import MealEditor from "@/components/MealEditor";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import AppBar from "@/components/AppBar";
 
 type MealRow = {
   id: string;
@@ -120,9 +121,7 @@ export default function HistoryPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
-      <header className="flex items-center justify-between pt-2">
-        <h1 className="font-display text-2xl text-ink">📊 히스토리</h1>
-      </header>
+      <AppBar title="📊 히스토리" />
 
       {/* 기간 토글 */}
       <div className="flex gap-2">

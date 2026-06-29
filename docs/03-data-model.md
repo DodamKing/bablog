@@ -89,7 +89,7 @@ unique(`user_id`, `period_label`).
 | `created_at` | timestamptz default now | |
 (PK는 `user_id`+`food_id` 복합). "자주 먹는 음식" 목록 = `user_foods` 기준 `is_favorite desc, usage_count desc`.
 
-### `user_profiles` — (제안, 백로그) 목표 칼로리 계산용 신체 정보
+### `user_profiles` — (확정, D20, Phase 7) 목표 칼로리 계산용 신체 정보
 BMR/TDEE 계산용. 체중은 `weight_logs` 최신값을 그대로 쓰고 중복 저장 안 함.
 | 컬럼 | 타입 | 설명 |
 |---|---|---|
@@ -128,15 +128,14 @@ BMR/TDEE 계산용. 체중은 `weight_logs` 최신값을 그대로 쓰고 중복
 | `created_at` | timestamptz default now | |
 
 ## 계산값 (저장 안 함, 매번 파생)
-아래는 테이블에 안 두고 `meals`/`weight_logs`/`user_profiles`에서 즉석 계산 (`01` 미해결 — 목표 칼로리/대사량 참고):
+아래는 테이블에 안 두고 `meals`/`weight_logs`/`user_profiles`에서 즉석 계산 (D20·Phase 7 범위, `lib/health/goals.ts`):
 - **BMR**(Mifflin-St Jeor): 남 `10×kg + 6.25×cm − 5×age + 5`, 여 `10×kg + 6.25×cm − 5×age − 161`
-- **TDEE** = BMR × `activity_level` 계수(좌식 1.2 ~ 매우활동적 1.9 등)
+- **TDEE** = BMR × `activity_level` 계수(좌식 1.2 / 가벼운활동 1.375 / 보통활동 1.55 / 활동적 1.725 / 매우활동적 1.9)
 - **목표 kcal** = TDEE + (목표 방향에 따른 일일 조정. 1kg ≈ 7700kcal → `weekly_rate_kg × 7700 / 7`만큼 가감)
-- **매크로 목표(g)** = 목표 kcal × 매크로 비율 ÷ (탄수·단백 4kcal/g, 지방 9kcal/g)
-- **순탄수** = `carb_g − fiber_g`
+- **매크로 목표(g)** = 목표 kcal × 고정 비율(탄50%/단20%/지30%, D20) ÷ (탄수·단백 4kcal/g, 지방 9kcal/g) — 비율 조절 UI는 Phase 8+ 백로그
 - **BMI** = `weight_kg / (height_m)^2`
 - **체중 변화량** = 최근 두 `weight_logs` 차이
-- **오늘 남은 칼로리** = 목표 kcal − 오늘 섭취 kcal + 오늘 `exercise_logs` 합계(있으면, 낮은 우선순위)
+- 다음은 **Phase 7 범위 밖**(Phase 8+ 백로그): **순탄수**(`carb_g − fiber_g`, 식이섬유 데이터 자체가 없음) · **오늘 남은 칼로리에 운동 반영**(`exercise_logs` 미도입이라 TDEE 정적 추정만 사용)
 
 ## 사진 저장 정책
 - **확정(D17):** 영구 보관, 저장소는 Cloudflare R2(egress 무료). 업로드는 서버(`/api/*`)에서만, 공개 URL을 `meals.photo_url`에 기록.

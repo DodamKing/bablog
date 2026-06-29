@@ -5,12 +5,14 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import AppBar from "@/components/AppBar";
 
 type WeightLog = {
   id: string;
@@ -35,6 +37,7 @@ export default function WeightPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<Range>("3개월");
+  const [targetWeightKg, setTargetWeightKg] = useState<number | null>(null);
 
   async function load() {
     try {
@@ -48,8 +51,25 @@ export default function WeightPage() {
     }
   }
 
+  // Phase 7(D20): 목표 체중 점선 표시 — 설정에 입력 안 했으면 그냥 안 보임.
+  async function loadTarget() {
+    try {
+      const res = await fetch("/api/profile");
+      if (!res.ok) return;
+      const { profile } = (await res.json()) as {
+        profile: { targetWeightKg: number | null } | null;
+      };
+      setTargetWeightKg(profile?.targetWeightKg ?? null);
+    } catch {
+      /* 보조 정보 — 실패해도 무시 */
+    }
+  }
+
   useEffect(() => {
-    load();
+    (async () => {
+      await load();
+      await loadTarget();
+    })();
   }, []);
 
   async function save() {
@@ -142,11 +162,16 @@ export default function WeightPage() {
       .sort((a, b) => a.t - b.t);
   }, [logs, range]);
 
+  const yDomain = useMemo((): [number, number] => {
+    const values = chartData.map((d) => d.weight);
+    if (targetWeightKg) values.push(targetWeightKg);
+    if (values.length === 0) return [0, 100];
+    return [Math.min(...values) - 1, Math.max(...values) + 1];
+  }, [chartData, targetWeightKg]);
+
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
-      <header className="flex items-center justify-between pt-2">
-        <h1 className="font-display text-2xl text-ink">⚖️ 체중</h1>
-      </header>
+      <AppBar title="⚖️ 체중" />
 
       {/* 입력 */}
       <section className="flex flex-col gap-3 rounded-3xl bg-coral-soft px-5 py-4">
@@ -232,7 +257,7 @@ export default function WeightPage() {
                 minTickGap={24}
               />
               <YAxis
-                domain={["dataMin - 1", "dataMax + 1"]}
+                domain={yDomain}
                 tick={{ fontSize: 11, fill: "#B8AFA6" }}
                 axisLine={false}
                 tickLine={false}
@@ -242,6 +267,20 @@ export default function WeightPage() {
                 contentStyle={{ borderRadius: 12, border: "1px solid #F1E8DE", fontSize: 12 }}
                 formatter={(v) => [`${Number(v)} kg`, ""]}
               />
+              {targetWeightKg && (
+                <ReferenceLine
+                  y={targetWeightKg}
+                  stroke="#7FB86C"
+                  strokeDasharray="4 4"
+                  strokeWidth={1.5}
+                  label={{
+                    value: `목표 ${targetWeightKg}kg`,
+                    position: "insideTopRight",
+                    fontSize: 11,
+                    fill: "#7FB86C",
+                  }}
+                />
+              )}
               <Line
                 type="monotone"
                 dataKey="weight"

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { signOut } from "next-auth/react";
 import type { MealEstimate, MealItem } from "@/lib/ai/types";
 import { hitToBasis, type FoodHit } from "@/lib/food/types";
 import { compressImage } from "@/lib/image";
@@ -10,10 +9,19 @@ import { useDraftItems } from "@/lib/useDraftItems";
 import { useBackTrap } from "@/lib/useBackTrap";
 import MealEditor from "@/components/MealEditor";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import AppBar from "@/components/AppBar";
+import type { DailyGoals } from "@/lib/health/goals";
 
 type Mode = "home" | "analyzing" | "search" | "review" | "saving";
 
-type MealRow = { id: string; eatenAt: string; kcal: number };
+type MealRow = {
+  id: string;
+  eatenAt: string;
+  kcal: number;
+  proteinG: string;
+  carbG: string;
+  fatG: string;
+};
 
 export default function RecordPage() {
   const [mode, setMode] = useState<Mode>("home");
@@ -52,6 +60,7 @@ export default function RecordPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   const [todayMeals, setTodayMeals] = useState<MealRow[]>([]);
+  const [goals, setGoals] = useState<DailyGoals | null>(null);
 
   async function loadToday() {
     try {
@@ -67,11 +76,29 @@ export default function RecordPage() {
     }
   }
 
+  // Phase 7(D20): 목표 kcal/매크로 — 프로필 미입력 시 null, 대시보드에서 안내문으로 대체.
+  async function loadGoals() {
+    try {
+      const res = await fetch("/api/profile");
+      if (!res.ok) return;
+      const { goals } = (await res.json()) as { goals: DailyGoals | null };
+      setGoals(goals);
+    } catch {
+      /* 보조 정보 — 실패해도 무시 */
+    }
+  }
+
   useEffect(() => {
-    loadToday();
+    (async () => {
+      await loadToday();
+      await loadGoals();
+    })();
   }, []);
 
   const todayKcal = todayMeals.reduce((s, m) => s + (m.kcal || 0), 0);
+  const todayProteinG = todayMeals.reduce((s, m) => s + (Number(m.proteinG) || 0), 0);
+  const todayCarbG = todayMeals.reduce((s, m) => s + (Number(m.carbG) || 0), 0);
+  const todayFatG = todayMeals.reduce((s, m) => s + (Number(m.fatG) || 0), 0);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -413,12 +440,7 @@ export default function RecordPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
-      <header className="flex items-center justify-between pt-2">
-        <h1 className="font-display text-2xl text-ink">🍚 밥로그</h1>
-        <button onClick={() => signOut()} className="text-xs text-muted">
-          로그아웃
-        </button>
-      </header>
+      <AppBar title="🍚 밥로그" />
 
       {/* 오늘 누적 */}
       <section className="rounded-3xl bg-coral-soft px-5 py-5">
@@ -448,6 +470,25 @@ export default function RecordPage() {
             </>
           )}
         </div>
+
+        {/* 목표 대비(Phase 7, D20) — 프로필 미입력 시 표시 안 함, 평가 문구·경고색 없이 숫자/바만 */}
+        {goals && (
+          <div className="mt-3">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-rice/70">
+              <div
+                className="h-full rounded-full bg-coral transition-all"
+                style={{
+                  width: `${Math.min(100, (todayKcal / goals.targetKcal) * 100)}%`,
+                }}
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-ink/45">
+              목표 {goals.targetKcal.toLocaleString()}kcal · 탄{" "}
+              {Math.round(todayCarbG)}/{goals.targetCarbG}g · 단 {Math.round(todayProteinG)}/
+              {goals.targetProteinG}g · 지 {Math.round(todayFatG)}/{goals.targetFatG}g
+            </p>
+          </div>
+        )}
       </section>
 
       {error && (

@@ -186,6 +186,25 @@ export const userFoods = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.foodId] })],
 );
 
+// Phase 7(D20): BMR/TDEE 계산용 1회성 신체정보 + 목표. 체중은 weight_logs 최신값을 그대로 쓰고 중복 저장 안 함.
+export const userProfiles = pgTable("user_profiles", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  birthYear: integer("birth_year"),
+  heightCm: numeric("height_cm"),
+  gender: text("gender").$type<"male" | "female">(),
+  activityLevel: text("activity_level").$type<
+    "sedentary" | "light" | "moderate" | "active" | "very_active"
+  >(),
+  goalType: text("goal_type").$type<"감량" | "유지" | "증량">(),
+  targetWeightKg: numeric("target_weight_kg"),
+  weeklyRateKg: numeric("weekly_rate_kg"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 // Phase 4: 푸시 구독. endpoint가 기기/브라우저 단위 식별자라 unique.
 // 03 문서 초안엔 user_id가 없었으나(D16 멀티유저 전환 전 작성) 발송 시 사용자별 스코프가 필요해 추가.
 export const pushSubscriptions = pgTable(

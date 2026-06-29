@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import AppBar from "@/components/AppBar";
 
 type Period = "주" | "월";
 
@@ -79,11 +80,7 @@ export default function ReportPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
-      <header className="flex items-center justify-between pt-2">
-        <h1 className="font-display text-2xl text-ink">
-          🍚 이번 {period === "주" ? "주" : "달"} 돌아보기
-        </h1>
-      </header>
+      <AppBar title={`🍚 이번 ${period === "주" ? "주" : "달"} 돌아보기`} />
 
       <div className="flex gap-2">
         {(["주", "월"] as Period[]).map((p) => (
