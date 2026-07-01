@@ -14,6 +14,7 @@ import { MEAL_TYPES, type MealType } from "@/lib/meal";
 import { useDraftItems } from "@/lib/useDraftItems";
 import { useBackTrap } from "@/lib/useBackTrap";
 import MealEditor from "@/components/MealEditor";
+import MealRecorder from "@/components/MealRecorder";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import AppBar from "@/components/AppBar";
 
@@ -240,6 +241,7 @@ function DayView({
   canNext: boolean;
   onChanged: () => void;
 }) {
+  const [adding, setAdding] = useState(false);
   const [editingMeal, setEditingMeal] = useState<MealRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MealRow | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -288,6 +290,22 @@ function DayView({
           단백질 {round1(total.p)}g · 탄수 {round1(total.c)}g · 지방 {round1(total.f)}g
         </p>
       </div>
+
+      {/* 지난 날짜 기록 입력(D22 개정) — 이 날짜 화면 안에서 바로 오버레이로 추가 */}
+      <button
+        onClick={() => setAdding(true)}
+        className="rounded-2xl border-2 border-dashed border-coral/40 py-3 text-center font-display text-coral transition active:scale-[0.99]"
+      >
+        + 기록 추가
+      </button>
+
+      {adding && (
+        <AddMealOverlay
+          date={date}
+          onClose={() => setAdding(false)}
+          onSaved={onChanged}
+        />
+      )}
 
       {/* 끼니 그룹 */}
       <div className="flex flex-col gap-5">
@@ -417,6 +435,39 @@ function MealCard({
           />
         </button>
       )}
+    </div>
+  );
+}
+
+// 지난 날짜 기록 입력(D22 개정): 히스토리에서 날짜 이동 후 "그 날짜로 바로 기록 추가".
+// MealEditOverlay와 같은 전체화면 오버레이 패턴, 내용물은 MealRecorder(검색 전용)를 재사용.
+function AddMealOverlay({
+  date,
+  onClose,
+  onSaved,
+}: {
+  date: Date;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  useBackTrap(true, onClose);
+
+  return (
+    <div className="fixed inset-0 z-30 overflow-y-auto bg-cream p-4">
+      <div className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4">
+        <header className="flex items-center justify-between pt-2">
+          <h2 className="font-display text-xl text-ink">{fmtDate(date)}에 기록 추가</h2>
+          <button onClick={onClose} className="text-sm text-muted">
+            닫기
+          </button>
+        </header>
+        <MealRecorder
+          targetDate={date}
+          allowCamera={false}
+          onSaved={onSaved}
+          onCancel={onClose}
+        />
+      </div>
     </div>
   );
 }

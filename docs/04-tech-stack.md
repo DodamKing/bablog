@@ -16,6 +16,7 @@
 
 > **버전:** 개인 프로젝트라 레거시 호환 부담 없음 (D12) — 항상 착수 시점 최신 안정 버전 사용 (D13). 2026-06-22 스캐폴딩 기준 Next.js 16.2.9, React 19.2.4.
 > Next.js 16은 `middleware.ts`가 `proxy.ts`로 바뀌는 등 breaking change가 있음 — 다음 세션도 코드 작성 전 `node_modules/next/dist/docs/`로 현재 컨벤션을 확인할 것 (`AGENTS.md` 참고).
+> **`next.config.ts`에 `reactStrictMode: false`(D23, 2026-07-01).** dev 전용 mount→cleanup→mount 이중 실행이 history 트랩(`lib/useBackTrap.ts`) 오버레이와 레이스를 일으켜 꺼둠 — dev 환경이 프로덕션과 동일하게 동작.
 
 ## 환경 변수 (.env)
 ```

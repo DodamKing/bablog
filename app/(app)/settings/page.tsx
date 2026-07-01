@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import AppBar from "@/components/AppBar";
 import {
   ACTIVITY_LABELS,
   type ActivityLevel,
@@ -107,12 +107,7 @@ export default function SettingsPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4">
-      <header className="flex items-center gap-3 pt-2">
-        <Link href="/" aria-label="뒤로" className="text-xl text-ink/70">
-          ←
-        </Link>
-        <h1 className="font-display text-2xl text-ink">설정</h1>
-      </header>
+      <AppBar title="내 정보" showBack />
 
       {loading ? (
         <p className="py-10 text-center text-sm text-muted">불러오는 중…</p>
